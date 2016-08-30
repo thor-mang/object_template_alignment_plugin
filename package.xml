@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package>
-  <name>object_template_alginment_plugin</name>
+  <name>object_template_alignment_plugin</name>
   <version>0.0.0</version>
-  <description>The object_template_alginment_plugin package</description>
+  <description>The object_template_alignment_plugin package</description>
 
   <!-- One maintainer tag required, multiple allowed, one person per tag --> 
   <!-- Example:  -->
@@ -19,7 +19,7 @@
   <!-- Url tags are optional, but mutiple are allowed, one per tag -->
   <!-- Optional attribute type can be: website, bugtracker, or repository -->
   <!-- Example: -->
-  <!-- <url type="website">http://wiki.ros.org/object_template_alginment_plugin</url> -->
+  <!-- <url type="website">http://wiki.ros.org/object_template_alignment_plugin</url> -->
 
 
   <!-- Author tags are optional, mutiple are allowed, one per tag -->
