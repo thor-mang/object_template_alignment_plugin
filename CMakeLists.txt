@@ -141,7 +141,29 @@ include_directories(
 ## Declare a C++ executable
 # add_executable(object_template_alignment_plugin_node src/object_template_alignment_plugin_node.cpp)
 
+add_executable(pointcloud_alignment_server src/pointcloud_alignment_server.cpp)
 
+target_link_libraries(
+  pointcloud_alignment_server
+  ${catkin_LIBRARIES}
+)
+
+add_dependencies(
+  pointcloud_alignment_server
+  ${object_template_alignment_plugin_EXPORTED_TARGETS}
+)
+
+add_executable(pointcloud_alignment_client src/pointcloud_alignment_client.cpp)
+
+target_link_libraries( 
+  pointcloud_alignment_client
+  ${catkin_LIBRARIES}
+)
+
+add_dependencies(
+  pointcloud_alignment_client
+  ${object_template_alignment_plugin_EXPORTED_TARGETS}
+)
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above

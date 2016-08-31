@@ -2,7 +2,7 @@
 int32 command
 ---
 #result definition
-float64[] transformation_matrix
+double64[] transformation_matrix
 ---
 #feedback
-float64 percentage
+double64 percentage
