@@ -1,8 +1,0 @@
-#goal definition
-int32 command
----
-#result definition
-double64[] transformation_matrix
----
-#feedback
-double64 percentage
