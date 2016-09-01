@@ -2,7 +2,7 @@
 int32 command
 ---
 #result definition
-float64[] transformation_matrix
+geometry_msgs/PoseStamped transformation_matrix
 ---
 #feedback
 float64 percentage

@@ -5,14 +5,16 @@ project(object_template_alignment_plugin)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
+  actionlib
   actionlib_msgs
   roscpp
   rospy
   std_msgs
+  geometry_msgs
 )
 
 ## System dependencies are found with CMake's conventions
-# find_package(Boost REQUIRED COMPONENTS system)
+ find_package(Boost REQUIRED COMPONENTS system)
 
 
 ## Uncomment this if the package has a setup.py. This macro ensures
@@ -77,7 +79,7 @@ add_action_files(
 # )
 
 generate_messages(
-  DEPENDENCIES actionlib_msgs std_msgs  # Or other packages containing msgs
+  DEPENDENCIES actionlib_msgs std_msgs geometry_msgs # Or other packages containing msgs
 )
 
 ################################################
@@ -110,7 +112,8 @@ generate_messages(
 ## CATKIN_DEPENDS: catkin_packages dependent projects also need
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
-  CATKIN_DEPENDS actionlib_msgs
+  CATKIN_DEPENDS actionlib actionlib_msgs message_generation roscpp rospy std_msgs
+#  DEPENDS system_lib geometry_msgs
 #  INCLUDE_DIRS include
 #  LIBRARIES object_template_alignment_plugin
 #  CATKIN_DEPENDS roscpp rospy std_msgs
@@ -125,7 +128,9 @@ catkin_package(
 ## Your package locations should be listed before other locations
 # include_directories(include)
 include_directories(
+  include
   ${catkin_INCLUDE_DIRS}
+  ${Boost_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -141,29 +146,21 @@ include_directories(
 ## Declare a C++ executable
 # add_executable(object_template_alignment_plugin_node src/object_template_alignment_plugin_node.cpp)
 
+
+## Declare a C++ executable
+# add_executable(learning_actionlib_kal_node src/learning_actionlib_kal_node.cpp)
 add_executable(pointcloud_alignment_server src/pointcloud_alignment_server.cpp)
-
-target_link_libraries(
-  pointcloud_alignment_server
-  ${catkin_LIBRARIES}
-)
-
-add_dependencies(
-  pointcloud_alignment_server
-  ${object_template_alignment_plugin_EXPORTED_TARGETS}
-)
-
 add_executable(pointcloud_alignment_client src/pointcloud_alignment_client.cpp)
 
-target_link_libraries( 
-  pointcloud_alignment_client
-  ${catkin_LIBRARIES}
-)
 
-add_dependencies(
-  pointcloud_alignment_client
-  ${object_template_alignment_plugin_EXPORTED_TARGETS}
-)
+## Add cmake target dependencies of the executable
+## same as for the library above
+add_dependencies(pointcloud_alignment_server ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_dependencies(pointcloud_alignment_client ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+## Specify libraries to link a library or executable target against
+target_link_libraries(pointcloud_alignment_server ${catkin_LIBRARIES})
+target_link_libraries(pointcloud_alignment_client ${catkin_LIBRARIES})
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
