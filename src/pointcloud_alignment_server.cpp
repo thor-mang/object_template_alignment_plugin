@@ -19,6 +19,10 @@ MatrixXd getTemplatePointcloud(string path, string filename);
 
 class PointcloudAlignmentAction
 {
+private:
+	static string currentTemplate;
+	static VectorXd currentPosition;
+	
 protected:
 	ros::NodeHandle nh_;
 	actionlib::SimpleActionServer<object_template_alignment_plugin::PointcloudAlignmentAction> as_; 
@@ -95,10 +99,35 @@ public:
           as_.setSucceeded(result_);
         }*/
     }
+    
+    void setCurrentTemplate(string templ) {
+		currentTemplate = templ;
+	}
+	
+	string getCurrentTemplate() {
+		return currentTemplate;
+	}
+	
+	void setCurrentPosition(VectorXd pos) {
+		currentPosition = pos;
+	}
+	
+	VectorXd getCurrentPosition() {
+		return currentPosition;
+	}
 };
+
+/*void testCallback(const std_msgs::String::ConstPtr& msg)
+{
+  ROS_INFO("I heard: [%s]", msg->data.c_str());
+}*/
 
 int main(int argc, char** argv) {
     ros::init(argc, argv, "pointcloud_alignment");
+    
+    ros::NodeHandle n;
+    
+    //ros::Subscriber sub = n.subscribe("chatter", 1000, testCallback);
 
     PointcloudAlignmentAction pointcloud_alignment(ros::this_node::getName());
     ros::spin();
