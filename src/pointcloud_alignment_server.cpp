@@ -9,8 +9,8 @@
 #include <fstream>
 #include <stdlib.h>
 
-#include "Eigen/Dense"
-#include "Eigen/SVD"
+#include <eigen3/Eigen/Dense>
+#include <eigen3/Eigen/SVD>
 
 using namespace Eigen;
 using namespace std;
