@@ -12,6 +12,10 @@
 #include <eigen3/Eigen/Dense>
 #include <eigen3/Eigen/SVD>
 
+#include <sensor_msgs/PointCloud2.h>
+#include <vigir_object_template_msgs/TemplateServerList.h>
+#include <vigir_ocs_msgs/OCSObjectSelection.h>
+
 using namespace Eigen;
 using namespace std;
 
@@ -38,6 +42,8 @@ public:
 	}
 
 	~PointcloudAlignmentAction(void) {}
+	
+	
   
     void executeCB(const object_template_alignment_plugin::PointcloudAlignmentGoalConstPtr &goal) {
 		bool success = true;
@@ -117,6 +123,31 @@ public:
 	}
 };
 
+void templateListCallback(const vigir_object_template_msgs::TemplateServerList::ConstPtr& newTemplate) {
+	//cout<<"I received a new template list"<<endl;
+}
+
+void templateSelectionCallback(const vigir_ocs_msgs::OCSObjectSelection::ConstPtr& newTemplate) {
+	cout<<"I received a new template"<<endl;
+}
+
+void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pointcloud) {
+	cout<<"Ich habe 1 Pointcloud empfangen"<<endl;
+	//cout<<"height: "<<pointcloud->height<<endl;
+	//cout<<"width: "<<pointcloud->width<<endl;
+	//char *data = pointcloud->data;
+	//if (pointcloud->is_dense == true) 
+	//	cout<<"isDense: "<<"true"<<endl;
+	//else
+	//	cout<<"isDense: "<<"false"<<endl;	
+	//return;
+}
+
+/*void pointcloudCallback(const object_template_alignment_plugin::PointcloudAlignmentGoalConstPtr &pointcloud) {
+	cout<<"Hier ist 1 neue pointcloud"<<endl;
+	return;
+}*/
+
 /*void testCallback(const std_msgs::String::ConstPtr& msg)
 {
   ROS_INFO("I heard: [%s]", msg->data.c_str());
@@ -127,7 +158,11 @@ int main(int argc, char** argv) {
     
     ros::NodeHandle n;
     
-    //ros::Subscriber sub = n.subscribe("chatter", 1000, testCallback);
+    ros::Subscriber sub1 = n.subscribe("/flor/worldmodel/ocs/cloud_result", 1000, pointcloudCallback);
+    
+    ros::Subscriber sub2 = n.subscribe("/flor/ocs/object_selection", 1000, templateSelectionCallback);
+    
+    ros::Subscriber sub3 = n.subscribe("/template/list", 1000, templateListCallback);
 
     PointcloudAlignmentAction pointcloud_alignment(ros::this_node::getName());
     ros::spin();
