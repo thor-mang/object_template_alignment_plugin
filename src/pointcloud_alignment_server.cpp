@@ -23,14 +23,24 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types_conversion.h>
 
+<<<<<<< HEAD
+=======
+
+
+
+
+>>>>>>> 21691d188916c5959bd4a223373524f2dfc584a4
 using namespace Eigen;
 using namespace std;
 
 MatrixXd getTemplatePointcloud(string path, string filename);
 
+<<<<<<< HEAD
 static int currentTemplateId;
 static VectorXd currentPosition;
 static MatrixXd currentPointcloud;
+=======
+>>>>>>> 21691d188916c5959bd4a223373524f2dfc584a4
 
 class PointcloudAlignmentAction
 {
@@ -129,6 +139,7 @@ void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pointcloud) {
     pcl::fromROSMsg(*pointcloud, *pc_);
 
 
+<<<<<<< HEAD
     cout<<"Ich habe 1 Pointcloud empfangen: " << pc_->at(0) <<endl;
 
     currentPointcloud = MatrixXd(3,pc_->size());
@@ -140,6 +151,18 @@ void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pointcloud) {
     }
 
 
+=======
+    cout<<"Ich habe 1 Pointcloud empfangen, grob: " << pc_->at(0) <<endl;
+
+    //cout<<"height: "<<pointcloud->height<<endl;
+	//cout<<"width: "<<pointcloud->width<<endl;
+	//char *data = pointcloud->data;
+	//if (pointcloud->is_dense == true) 
+	//	cout<<"isDense: "<<"true"<<endl;
+	//else
+	//	cout<<"isDense: "<<"false"<<endl;	
+	//return;
+>>>>>>> 21691d188916c5959bd4a223373524f2dfc584a4
 }
 
 /*void pointcloudCallback(const object_template_alignment_plugin::PointcloudAlignmentGoalConstPtr &pointcloud) {
