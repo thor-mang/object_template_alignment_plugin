@@ -16,10 +16,22 @@
 #include <vigir_object_template_msgs/TemplateServerList.h>
 #include <vigir_ocs_msgs/OCSObjectSelection.h>
 
+#include <pcl_ros/point_cloud.h>
+#include <pcl_conversions/pcl_conversions.h>
+#include <pcl/PCLPointCloud2.h>
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+#include <pcl/point_types_conversion.h>
+
+
+
+
+
 using namespace Eigen;
 using namespace std;
 
 MatrixXd getTemplatePointcloud(string path, string filename);
+
 
 class PointcloudAlignmentAction
 {
@@ -132,8 +144,14 @@ void templateSelectionCallback(const vigir_ocs_msgs::OCSObjectSelection::ConstPt
 }
 
 void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pointcloud) {
-	cout<<"Ich habe 1 Pointcloud empfangen"<<endl;
-	//cout<<"height: "<<pointcloud->height<<endl;
+
+    boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pc_ (new pcl::PointCloud<pcl::PointXYZ>());
+    pcl::fromROSMsg(*pointcloud, *pc_);
+
+
+    cout<<"Ich habe 1 Pointcloud empfangen, grob: " << pc_->at(0) <<endl;
+
+    //cout<<"height: "<<pointcloud->height<<endl;
 	//cout<<"width: "<<pointcloud->width<<endl;
 	//char *data = pointcloud->data;
 	//if (pointcloud->is_dense == true) 
