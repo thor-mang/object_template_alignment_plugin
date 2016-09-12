@@ -114,7 +114,7 @@ public:
 
 };
 
-void templateListCallback(const vigir_object_template_msgs::TemplateServerList::ConstPtr& newTemplate) {
+void templateListCallback(const vigir_object_template_msgs::TemplateServerList::ConstPtr& newTemplateList) {
     //cout<<"I received a new template list"<<endl;
 }
 
