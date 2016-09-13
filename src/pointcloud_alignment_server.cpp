@@ -113,8 +113,24 @@ public:
 
 };
 
-void templateListCallback(const vigir_object_template_msgs::TemplateServerList::ConstPtr& newTemplateList) {
+void templateListCallback(const vigir_object_template_msgs::TemplateServerList::ConstPtr& templateList) {
     //cout<<"I received a new template list"<<endl;
+    int pos = -1;
+    for (int i = 0; i < templateList->template_id_list.size(); i++) {
+
+        if (templateList->template_id_list.at(i) == currentTemplateId) {
+            pos = i;
+            break;
+        }
+    }
+
+
+    if (pos != -1) {
+        cout<<"hit: "<<pos<<endl;
+        cout<<templateList->template_list.at(pos)<<endl;
+        //cout<<templateList->pos <<endl;
+    }
+
 }
 
 void templateSelectionCallback(const vigir_ocs_msgs::OCSObjectSelection::ConstPtr& newTemplate) {
@@ -127,7 +143,6 @@ void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pointcloud) {
     boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pc_ (new pcl::PointCloud<pcl::PointXYZ>());
     pcl::fromROSMsg(*pointcloud, *pc_);
 
-
     cout<<"Ich habe 1 Pointcloud empfangen: " << pc_->at(0) <<endl;
 
     currentPointcloud = MatrixXd(3,pc_->size());
@@ -137,7 +152,6 @@ void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pointcloud) {
         currentPointcloud(1,i) = pc_->at(i).y;
         currentPointcloud(2,i) = pc_->at(i).z;
     }
-
 }
 
 /*void pointcloudCallback(const object_template_alignment_plugin::PointcloudAlignmentGoalConstPtr &pointcloud) {
