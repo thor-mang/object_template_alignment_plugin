@@ -12,7 +12,7 @@ class PointcloudAlignmentClient
     
 };
 
-static int sigint = 0;
+static /*volatile*/ int sigint = 0;
 
 void signalHandler( int signum )
 {
