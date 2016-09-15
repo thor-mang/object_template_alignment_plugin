@@ -32,12 +32,25 @@
 using namespace Eigen;
 using namespace std;
 
-MatrixXd getTemplatePointcloud(string path, string filename);
+MatrixXf getTemplatePointcloud(string path, string filename);
+void saveDataToFile(VectorXf transformation, MatrixXf rotation, MatrixXf template_cloud, MatrixXf world_cloud);
+
+int get_inlier_number(float inlier_portion, int number_points);
+float trimmed_scaling_icp(MatrixXf pc1, MatrixXf pc2, MatrixXf &R_result, VectorXf &t_result, float &s_result, MatrixXf R_init,
+        VectorXf t_init, float s_init, float eps, int maxIt, float inlier_portion);
+void trim_pc(MatrixXf pc, MatrixXf cp, VectorXf distances, MatrixXf &pc_trimmed, MatrixXf &cp_trimmed, int number_inliers);
+void find_correspondences(MatrixXf pc1, MatrixXf pc2, MatrixXf &cp, VectorXf &distances);
+void find_transformation(MatrixXf pc1, MatrixXf pc2, MatrixXf &R, VectorXf &t, float &s);
+void apply_transformation(MatrixXf pc, MatrixXf &pc_proj, MatrixXf R, VectorXf t, float s);
+float calc_error(MatrixXf pc1, MatrixXf pc2, float inlier_portion);
+float calc_error(MatrixXf pc1, MatrixXf pc2);
+void sort(VectorXf &v);
+VectorXf matrixToVector(MatrixXf m);
 
 static int currentTemplateId;
-static VectorXd currentPosition;
-static MatrixXd currentPointcloud;
-
+static VectorXf currentPosition;
+static MatrixXf currentRotation;
+static MatrixXf currentTargetPointcloud;
 
 class PointcloudAlignmentAction
 {
@@ -66,20 +79,100 @@ public:
         std::string filename = "DRC_drill.pcd";
         std::string path = "vigir/vigir_templates/vigir_template_library/object_library/tools/";
 
-        MatrixXd template_pointcloud = getTemplatePointcloud(path, filename);
+        MatrixXf template_pointcloud = getTemplatePointcloud(path, filename);
 
-        if(success)
+
+        MatrixXf R_icp(3,3);
+        VectorXf t_icp(3);
+        float s_icp;
+
+
+        R_icp = MatrixXf::Identity(3,3);
+        t_icp << 0,0,0;
+        s_icp = 0;
+
+
+        //float error = trimmed_scaling_icp(template_pointcloud, currentTargetPointcloud, R_icp, t_icp, s_icp, currentRotation, currentPosition, 1.0, 5, 100, 0.4);
+
+        //saveDataToFile(currentPosition, currentRotation, template_pointcloud, currentTargetPointcloud);
+
+        //cout<<"error: "<<error<<endl;
+
+
+        if (success)
         {
           geometry_msgs::PoseStamped result;
           geometry_msgs::Quaternion orientation;
+          geometry_msgs::Point position;
+
+          position.x = t_icp(0);
+          position.y = t_icp(1);
+          position.z = t_icp(2);
+
+          orientation.w = sqrt(1. + R_icp(0,0) + R_icp(1,1) + R_icp(2,2)); // TODO: Division durch Null abfangen
+          orientation.x = (R_icp(2,1) - R_icp(1,2)) / (4.*orientation.w);
+          orientation.y = (R_icp(0,2) - R_icp(2,0)) / (4.*orientation.w);
+          orientation.z = (R_icp(1,0) - R_icp(0,1)) / (4.*orientation.w);
+
           result.pose.orientation = orientation;
+          result.pose.position = position;
           result_.transformation_matrix = result;
+
+          // TODO: header setzen
+          result_.transformation_matrix.header.stamp = ros::Time::now();
+
           ROS_INFO("%s: Succeeded", action_name_.c_str());
           as_.setSucceeded(result_);
         }
     }
 
 };
+
+void saveDataToFile(VectorXf transformation, MatrixXf rotation, MatrixXf template_cloud, MatrixXf world_cloud) {
+    ofstream transformationFile, rotationFile, templateFile, worldFile;
+
+    transformationFile.open("transformation.txt");
+    if (!transformationFile.is_open()) {
+        cout<<"Fehler beim oeffnen von transformation.txt!"<<endl;
+    }
+    transformationFile << transformation(0)<<" ";
+    transformationFile << transformation(1)<<" ";
+    transformationFile << transformation(2);
+    transformationFile.close();
+
+    rotationFile.open("rotation.txt");
+    if (!rotationFile.is_open()) {
+        cout<<"Fehler beim oeffnen von rotation.txt!"<<endl;
+    }
+    rotationFile << rotation(0,0)<<" "<<rotation(0,1)<<" "<<rotation(0,2)<<" ";
+    rotationFile << rotation(1,0)<<" "<<rotation(1,1)<<" "<<rotation(1,2)<<" ";
+    rotationFile << rotation(2,0)<<" "<<rotation(2,1)<<" "<<rotation(2,2)<<" ";
+    rotationFile.close();
+
+    templateFile.open("template_cloud.txt");
+    if (!templateFile.is_open()) {
+        cout<<"Fehler beim oeffnen von template_cloud.txt!"<<endl;
+    }
+    templateFile << template_cloud.cols() << "\n";
+    for (int i = 0; i < template_cloud.cols(); i++) {
+        templateFile << template_cloud(0,i) << " ";
+        templateFile << template_cloud(1,i) << " ";
+        templateFile << template_cloud(2,i) << "\n";
+    }
+    templateFile.close();
+
+    worldFile.open("world_cloud.txt");
+    if (!worldFile.is_open()) {
+        cout<<"Fehler beim oeffnen von world_cloud.txt!"<<endl;
+    }
+    worldFile << world_cloud.cols() << "\n";
+    for (int i = 0; i < world_cloud.cols(); i++) {
+        worldFile << world_cloud(0,i) << " ";
+        worldFile << world_cloud(1,i) << " ";
+        worldFile << world_cloud(2,i) << "\n";
+    }
+    worldFile.close();
+}
 
 void templateListCallback(const vigir_object_template_msgs::TemplateServerList::ConstPtr& templateList) {
     //cout<<"I received a new template list"<<endl;
@@ -92,14 +185,30 @@ void templateListCallback(const vigir_object_template_msgs::TemplateServerList::
         }
     }
 
+    //templateList->template_status_list.at(0).header;
+
 
     if (pos != -1) {
-        cout<<"hit: "<<pos<<endl;
-        cout<<templateList->template_list.at(pos)<<endl;
-        //cout<<templateList->pos <<endl;
+        currentPosition = VectorXf(3);
+        currentPosition << templateList->pose.at(pos).pose.position.x,
+                           templateList->pose.at(pos).pose.position.y,
+                           templateList->pose.at(pos).pose.position.z;
+
+        currentRotation = MatrixXf(3,3);
+        float qx = templateList->pose.at(pos).pose.orientation.x;
+        float qy = templateList->pose.at(pos).pose.orientation.y;
+        float qz = templateList->pose.at(pos).pose.orientation.z;
+        float qw = templateList->pose.at(pos).pose.orientation.w;
+
+        currentRotation <<
+            1.0f - 2.0f*qy*qy - 2.0f*qz*qz, 2.0f*qx*qy - 2.0f*qz*qw, 2.0f*qx*qz + 2.0f*qy*qw,
+            2.0f*qx*qy + 2.0f*qz*qw, 1.0f - 2.0f*qx*qx - 2.0f*qz*qz, 2.0f*qy*qz - 2.0f*qx*qw,
+            2.0f*qx*qz - 2.0f*qy*qw, 2.0f*qy*qz + 2.0f*qx*qw, 1.0f - 2.0f*qx*qx - 2.0f*qy*qy;
     }
 
 }
+
+
 
 void templateSelectionCallback(const vigir_ocs_msgs::OCSObjectSelection::ConstPtr& newTemplate) {
     cout<<"I received a new template"<<endl;
@@ -113,12 +222,12 @@ void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pointcloud) {
 
     //cout<<"Ich habe 1 Pointcloud empfangen: " << pc_->at(0) <<endl;
 
-    currentPointcloud = MatrixXd(3,pc_->size());
+    currentTargetPointcloud = MatrixXf(3,pc_->size());
 
     for (int i = 0; i < pc_->size(); i++) {
-        currentPointcloud(0,i) = pc_->at(i).x;
-        currentPointcloud(1,i) = pc_->at(i).y;
-        currentPointcloud(2,i) = pc_->at(i).z;
+        currentTargetPointcloud(0,i) = pc_->at(i).x;
+        currentTargetPointcloud(1,i) = pc_->at(i).y;
+        currentTargetPointcloud(2,i) = pc_->at(i).z;
     }
 }
 
@@ -146,7 +255,7 @@ std::string get_working_path()
     return ( getcwd(temp, MAXPATHLEN) ? std::string( temp ) : std::string("") );
 }
 
-MatrixXd getTemplatePointcloud(string path, string filename) {
+MatrixXf getTemplatePointcloud(string path, string filename) {
     std::ifstream file;
     string full_filename = path + filename; // TODO: / am Ende von path abfragen
     // TODO: Endung auf .pcd ueberpruefen
@@ -158,7 +267,7 @@ MatrixXd getTemplatePointcloud(string path, string filename) {
     file.open(full_filename.c_str());
     if (!file.is_open()) {
         std::cerr<<"Error while reading the input file!"<<std::endl;
-        return MatrixXd::Identity(3,3);
+        return MatrixXf::Identity(3,3);
     }
 
     string tmp;
@@ -172,7 +281,7 @@ MatrixXd getTemplatePointcloud(string path, string filename) {
     file>>tmp;
     file>>tmp;
 
-    MatrixXd pointcloud(3,number_points);
+    MatrixXf pointcloud(3,number_points);
     for (int i = 1; i < number_points; i++) {
         file >> pointcloud(0,i);
         file >> pointcloud(1,i);
@@ -190,20 +299,13 @@ MatrixXd getTemplatePointcloud(string path, string filename) {
 // ************************************ ICP algorithm **************************************************
 // *****************************************************************************************************
 
-float trimmed_scaling_icp(MatrixXf pc1, MatrixXf pc2, MatrixXf &R_result, VectorXf &t_result, float &s_result, MatrixXf R_init,
-        VectorXf t_init, float s_init, float eps, int maxIt, int number_inliers);
-void trim_pc(MatrixXf pc, MatrixXf cp, VectorXf distances, MatrixXf &pc_trimmed, MatrixXf &cp_trimmed, int number_inliers);
-void find_correspondences(MatrixXf pc1, MatrixXf pc2, MatrixXf &cp, VectorXf &distances);
-void find_transformation(MatrixXf pc1, MatrixXf pc2, MatrixXf &R, VectorXf &t, float &s);
-void apply_transformation(MatrixXf pc, MatrixXf &pc_proj, MatrixXf R, VectorXf t, float s);
-float calc_error(MatrixXf pc1, MatrixXf pc2, int number_inliers);
-float calc_error(MatrixXf pc1, MatrixXf pc2);
-void sort(VectorXf &v);
-VectorXf matrixToVector(MatrixXf m);
 
+int get_inlier_number(float inlier_portion, int number_points) {
+    return (int) floor(inlier_portion*((float) number_points));
+}
 
 float trimmed_scaling_icp(MatrixXf pc1, MatrixXf pc2, MatrixXf &R_result, VectorXf &t_result, float &s_result, MatrixXf R_init,
-        VectorXf t_init, float s_init, float eps, int maxIt, int number_inliers) {
+        VectorXf t_init, float s_init, float eps, int maxIt, float inlier_portion) {
 
     int itCt = 0;
 
@@ -219,14 +321,16 @@ float trimmed_scaling_icp(MatrixXf pc1, MatrixXf pc2, MatrixXf &R_result, Vector
     VectorXf distances(pc1.cols());
     MatrixXf pc1_proj(pc1.rows(), pc1.cols());
 
+    int number_inliers = get_inlier_number(inlier_portion, pc1.cols());
+
     MatrixXf pc1_trimmed(3, number_inliers);
-    MatrixXf pc1_proj_trimmed(3, number_inliers);
     MatrixXf cp_trimmed(3, number_inliers);
 
     apply_transformation(pc1, pc1_proj, R_init, t_init, s_init);
 
     while ((((R_result-R_old).norm() + (t_result-t_old).norm() + abs(s_result-s_old) > eps) || (itCt == 0)) && (itCt < maxIt)) {
         itCt++;
+        cout<<"it: "<<itCt<<endl;
 
         R_old = R_result;
         t_old = t_result;
@@ -241,11 +345,10 @@ float trimmed_scaling_icp(MatrixXf pc1, MatrixXf pc2, MatrixXf &R_result, Vector
         apply_transformation(pc1, pc1_proj, R_result, t_result, s_result);
     }
 
-    return calc_error(pc1_proj, pc2, number_inliers);
+    return calc_error(pc1_proj, pc2, inlier_portion);
 }
 
 void trim_pc(MatrixXf pc, MatrixXf cp, VectorXf distances, MatrixXf &pc_trimmed, MatrixXf &cp_trimmed, int number_inliers) {
-
     VectorXf distances_sorted = distances;
 
     sort(distances_sorted);
@@ -347,11 +450,13 @@ void apply_transformation(MatrixXf pc, MatrixXf &pc_proj, MatrixXf R, VectorXf t
     pc_proj = pc_proj.array().colwise() + t.array();
 }
 
-float calc_error(MatrixXf pc1, MatrixXf pc2, int number_inliers) {
-    MatrixXf cp(pc2.rows(), pc1.cols());
+float calc_error(MatrixXf pc1, MatrixXf pc2, float inlier_portion) {
+    int number_inliers = get_inlier_number(inlier_portion, pc1.cols());
+
+    MatrixXf cp(3, pc1.cols());
     VectorXf distances(pc1.cols());
-    MatrixXf pc1_trimmed(pc1.rows(), number_inliers);
-    MatrixXf cp_trimmed(pc2.rows(), number_inliers);
+    MatrixXf pc1_trimmed(3, number_inliers);
+    MatrixXf cp_trimmed(3, number_inliers);
 
     find_correspondences(pc1, pc2, cp, distances);
     trim_pc(pc1, cp, distances, pc1_trimmed, cp_trimmed, number_inliers);
