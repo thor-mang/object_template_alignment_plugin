@@ -28,6 +28,8 @@
 #include <algorithm>
 #include <float.h>
 
+#include <vigir_object_template_msgs/SetAlignObjectTemplate.h>
+
 
 using namespace Eigen;
 using namespace std;
@@ -89,90 +91,64 @@ public:
 
         R_icp = MatrixXf::Identity(3,3);
         t_icp << 0,0,0;
-        s_icp = 0;
+        s_icp = 1;
 
 
-        //float error = trimmed_scaling_icp(template_pointcloud, currentTargetPointcloud, R_icp, t_icp, s_icp, currentRotation, currentPosition, 1.0, 5, 100, 0.4);
+        float error = trimmed_scaling_icp(template_pointcloud, currentTargetPointcloud, R_icp, t_icp, s_icp, currentRotation, currentPosition, 1.0, 1e-3, 100, 0.4);
+
+        cout<<"error: "<<error<<endl;
 
         //saveDataToFile(currentPosition, currentRotation, template_pointcloud, currentTargetPointcloud);
-
-        //cout<<"error: "<<error<<endl;
 
 
         if (success)
         {
-          geometry_msgs::PoseStamped result;
-          geometry_msgs::Quaternion orientation;
-          geometry_msgs::Point position;
+        geometry_msgs::Quaternion orientation;
+        geometry_msgs::Point position;
 
-          position.x = t_icp(0);
-          position.y = t_icp(1);
-          position.z = t_icp(2);
+        position.x = t_icp(0);
+        position.y = t_icp(1);
+        position.z = t_icp(2);
 
-          orientation.w = sqrt(1. + R_icp(0,0) + R_icp(1,1) + R_icp(2,2)); // TODO: Division durch Null abfangen
-          orientation.x = (R_icp(2,1) - R_icp(1,2)) / (4.*orientation.w);
-          orientation.y = (R_icp(0,2) - R_icp(2,0)) / (4.*orientation.w);
-          orientation.z = (R_icp(1,0) - R_icp(0,1)) / (4.*orientation.w);
+        orientation.w = sqrt(1. + R_icp(0,0) + R_icp(1,1) + R_icp(2,2)); // TODO: Division durch Null abfangen
+        orientation.x = (R_icp(2,1) - R_icp(1,2)) / (4.*orientation.w);
+        orientation.y = (R_icp(0,2) - R_icp(2,0)) / (4.*orientation.w);
+        orientation.z = (R_icp(1,0) - R_icp(0,1)) / (4.*orientation.w);
 
-          result.pose.orientation = orientation;
-          result.pose.position = position;
-          result_.transformation_matrix = result;
 
-          // TODO: header setzen
-          result_.transformation_matrix.header.stamp = ros::Time::now();
+        ros::ServiceClient align_template_client;
+        vigir_object_template_msgs::SetAlignObjectTemplate align_template_srv_;
 
-          ROS_INFO("%s: Succeeded", action_name_.c_str());
-          as_.setSucceeded(result_);
+        align_template_client = nh_.serviceClient<vigir_object_template_msgs::SetAlignObjectTemplate>("/align_object_template");
+
+        align_template_srv_.request.template_id = currentTemplateId;
+        align_template_srv_.request.pose.pose.position = position;
+        align_template_srv_.request.pose.pose.orientation = orientation;
+        if (!align_template_client.call(align_template_srv_))
+        {
+           ROS_ERROR("Failed to call service request align template");
+           cout<<"align template client success"<<endl;
+        } else {
+            cout<<"align template client failed"<<endl;
+        }
+
+        geometry_msgs::PoseStamped result;
+
+        result.pose.orientation = orientation;
+        result.pose.position = position;
+        result_.transformation_matrix = result;
+
+        // TODO: header setzen
+        result_.transformation_matrix.header.stamp = ros::Time::now();
+
+        ROS_INFO("%s: Succeeded", action_name_.c_str());
+        as_.setSucceeded(result_);
         }
     }
 
 };
 
-void saveDataToFile(VectorXf transformation, MatrixXf rotation, MatrixXf template_cloud, MatrixXf world_cloud) {
-    ofstream transformationFile, rotationFile, templateFile, worldFile;
 
-    transformationFile.open("transformation.txt");
-    if (!transformationFile.is_open()) {
-        cout<<"Fehler beim oeffnen von transformation.txt!"<<endl;
-    }
-    transformationFile << transformation(0)<<" ";
-    transformationFile << transformation(1)<<" ";
-    transformationFile << transformation(2);
-    transformationFile.close();
-
-    rotationFile.open("rotation.txt");
-    if (!rotationFile.is_open()) {
-        cout<<"Fehler beim oeffnen von rotation.txt!"<<endl;
-    }
-    rotationFile << rotation(0,0)<<" "<<rotation(0,1)<<" "<<rotation(0,2)<<" ";
-    rotationFile << rotation(1,0)<<" "<<rotation(1,1)<<" "<<rotation(1,2)<<" ";
-    rotationFile << rotation(2,0)<<" "<<rotation(2,1)<<" "<<rotation(2,2)<<" ";
-    rotationFile.close();
-
-    templateFile.open("template_cloud.txt");
-    if (!templateFile.is_open()) {
-        cout<<"Fehler beim oeffnen von template_cloud.txt!"<<endl;
-    }
-    templateFile << template_cloud.cols() << "\n";
-    for (int i = 0; i < template_cloud.cols(); i++) {
-        templateFile << template_cloud(0,i) << " ";
-        templateFile << template_cloud(1,i) << " ";
-        templateFile << template_cloud(2,i) << "\n";
-    }
-    templateFile.close();
-
-    worldFile.open("world_cloud.txt");
-    if (!worldFile.is_open()) {
-        cout<<"Fehler beim oeffnen von world_cloud.txt!"<<endl;
-    }
-    worldFile << world_cloud.cols() << "\n";
-    for (int i = 0; i < world_cloud.cols(); i++) {
-        worldFile << world_cloud(0,i) << " ";
-        worldFile << world_cloud(1,i) << " ";
-        worldFile << world_cloud(2,i) << "\n";
-    }
-    worldFile.close();
-}
 
 void templateListCallback(const vigir_object_template_msgs::TemplateServerList::ConstPtr& templateList) {
     //cout<<"I received a new template list"<<endl;
@@ -292,7 +268,52 @@ MatrixXf getTemplatePointcloud(string path, string filename) {
 }
 
 
+// save test data to file to be able to work on icp without having to run the simulation every time
+void saveDataToFile(VectorXf transformation, MatrixXf rotation, MatrixXf template_cloud, MatrixXf world_cloud) {
+    ofstream transformationFile, rotationFile, templateFile, worldFile;
 
+    transformationFile.open("transformation.txt");
+    if (!transformationFile.is_open()) {
+        cout<<"Fehler beim oeffnen von transformation.txt!"<<endl;
+    }
+    transformationFile << transformation(0)<<" ";
+    transformationFile << transformation(1)<<" ";
+    transformationFile << transformation(2);
+    transformationFile.close();
+
+    rotationFile.open("rotation.txt");
+    if (!rotationFile.is_open()) {
+        cout<<"Fehler beim oeffnen von rotation.txt!"<<endl;
+    }
+    rotationFile << rotation(0,0)<<" "<<rotation(0,1)<<" "<<rotation(0,2)<<" ";
+    rotationFile << rotation(1,0)<<" "<<rotation(1,1)<<" "<<rotation(1,2)<<" ";
+    rotationFile << rotation(2,0)<<" "<<rotation(2,1)<<" "<<rotation(2,2)<<" ";
+    rotationFile.close();
+
+    templateFile.open("template_cloud.txt");
+    if (!templateFile.is_open()) {
+        cout<<"Fehler beim oeffnen von template_cloud.txt!"<<endl;
+    }
+    templateFile << template_cloud.cols() << "\n";
+    for (int i = 0; i < template_cloud.cols(); i++) {
+        templateFile << template_cloud(0,i) << " ";
+        templateFile << template_cloud(1,i) << " ";
+        templateFile << template_cloud(2,i) << "\n";
+    }
+    templateFile.close();
+
+    worldFile.open("world_cloud.txt");
+    if (!worldFile.is_open()) {
+        cout<<"Fehler beim oeffnen von world_cloud.txt!"<<endl;
+    }
+    worldFile << world_cloud.cols() << "\n";
+    for (int i = 0; i < world_cloud.cols(); i++) {
+        worldFile << world_cloud(0,i) << " ";
+        worldFile << world_cloud(1,i) << " ";
+        worldFile << world_cloud(2,i) << "\n";
+    }
+    worldFile.close();
+}
 
 
 // *****************************************************************************************************
