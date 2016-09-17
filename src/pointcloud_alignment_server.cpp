@@ -30,6 +30,9 @@
 
 #include <vigir_object_template_msgs/SetAlignObjectTemplate.h>
 
+#include <pcl/kdtree/kdtree.h>
+#include <pcl/kdtree/kdtree_flann.h>
+
 
 using namespace Eigen;
 using namespace std;
@@ -53,6 +56,7 @@ static int currentTemplateId;
 static VectorXf currentPosition;
 static MatrixXf currentRotation;
 static MatrixXf currentTargetPointcloud;
+static pcl::KdTreeFLANN<pcl::PointXYZ> targetKdTree;
 
 class PointcloudAlignmentAction
 {
@@ -79,6 +83,7 @@ public:
         bool success = true;
 
         std::string filename = "DRC_drill.pcd";
+        //std::string path = "~/thor/src/vigir/vigir_templates/vigir_template_library/object_library/tools/";
         std::string path = "vigir/vigir_templates/vigir_template_library/object_library/tools/";
 
         MatrixXf template_pointcloud = getTemplatePointcloud(path, filename);
@@ -89,10 +94,10 @@ public:
         float s_icp;
 
 
-        R_icp = MatrixXf::Identity(3,3);
-        t_icp << 0,0,0;
-        s_icp = 1;
-
+        R_icp;
+        R_icp = currentRotation;
+        t_icp = currentPosition;
+        s_icp = 1.;
 
         float error = trimmed_scaling_icp(template_pointcloud, currentTargetPointcloud, R_icp, t_icp, s_icp, currentRotation, currentPosition, 1.0, 1e-3, 100, 0.4);
 
@@ -100,6 +105,9 @@ public:
 
         //saveDataToFile(currentPosition, currentRotation, template_pointcloud, currentTargetPointcloud);
 
+        //R_icp = currentRotation;
+        //t_icp = currentPosition;
+        //s_icp = 1.;
 
         if (success)
         {
@@ -110,7 +118,7 @@ public:
         position.y = t_icp(1);
         position.z = t_icp(2);
 
-        orientation.w = sqrt(1. + R_icp(0,0) + R_icp(1,1) + R_icp(2,2)); // TODO: Division durch Null abfangen
+        orientation.w = sqrt(1. + R_icp(0,0) + R_icp(1,1) + R_icp(2,2)) / 2.; // TODO: Division durch Null abfangen
         orientation.x = (R_icp(2,1) - R_icp(1,2)) / (4.*orientation.w);
         orientation.y = (R_icp(0,2) - R_icp(2,0)) / (4.*orientation.w);
         orientation.z = (R_icp(1,0) - R_icp(0,1)) / (4.*orientation.w);
@@ -205,6 +213,9 @@ void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pointcloud) {
         currentTargetPointcloud(1,i) = pc_->at(i).y;
         currentTargetPointcloud(2,i) = pc_->at(i).z;
     }
+
+
+    targetKdTree.setInputCloud (pc_);
 }
 
 int main(int argc, char** argv) {
@@ -321,6 +332,7 @@ void saveDataToFile(VectorXf transformation, MatrixXf rotation, MatrixXf templat
 // *****************************************************************************************************
 
 
+
 int get_inlier_number(float inlier_portion, int number_points) {
     return (int) floor(inlier_portion*((float) number_points));
 }
@@ -393,25 +405,25 @@ void trim_pc(MatrixXf pc, MatrixXf cp, VectorXf distances, MatrixXf &pc_trimmed,
 }
 
 void find_correspondences(MatrixXf pc1, MatrixXf pc2, MatrixXf &cp, VectorXf &distances) {
-    MatrixXf distance_field(pc1.cols(), pc2.cols());
-    MatrixXf distances_mat_i(3,pc2.cols());
-    VectorXf distances_i(pc2.cols());
-
-    int minIdx;
+    pcl::PointXYZ searchPoint;
 
     for (int i = 0; i < pc1.cols(); i++) {
-        distances_mat_i = pc2.array().colwise() - pc1.col(i).array();
-        distances_i = distances_mat_i.row(0).cwiseProduct(distances_mat_i.row(0)) +
-                      distances_mat_i.row(1).cwiseProduct(distances_mat_i.row(1)) +
-                      distances_mat_i.row(2).cwiseProduct(distances_mat_i.row(2));
-        distances_i = distances_i.array().sqrt();
-        distances_i.minCoeff(&minIdx);
+        searchPoint.x = pc1(0,i);
+        searchPoint.y = pc1(1,i);
+        searchPoint.z = pc1(2,i);
 
-        distances(i) = distances_i(minIdx);
+        std::vector<int> pointIdxNKNSearch(1);
+        std::vector<float> pointNKNSquaredDistance(1);
 
-        cp(0,i) = pc2(0,minIdx);
-        cp(1,i) = pc2(1,minIdx);
-        cp(2,i) = pc2(2,minIdx);
+        if (targetKdTree.nearestKSearch (searchPoint, 1, pointIdxNKNSearch, pointNKNSquaredDistance) > 0) {
+            for (size_t k = 0; k < pointIdxNKNSearch.size (); ++k) {
+                cp(0,i) = pc2(0,pointIdxNKNSearch[k]);
+                cp(1,i) = pc2(1,pointIdxNKNSearch[k]);
+                cp(2,i) = pc2(2,pointIdxNKNSearch[k]);
+
+                distances(i) = sqrt(pointNKNSquaredDistance[k]);
+            }
+        }
     }
 }
 
