@@ -59,8 +59,8 @@ typedef struct PriorityQueue {
 MatrixXf getTemplatePointcloud(string path, string filename);
 void saveDataToFile(VectorXf transformation, MatrixXf rotation, MatrixXf template_cloud, MatrixXf world_cloud);
 
-bool find_pointcloud_alignment(MatrixXf pc1, MatrixXf pc2, float eps, VectorXf t_init, float s_init, MatrixXf &R_icp, VectorXf &t_icp, float &s_icp,
-    float &error, int &itCt, int maxIcpIt, float icpEps, int maxDepth, float inlier_portion, float maxTime);
+float find_pointcloud_alignment(MatrixXf pc1, MatrixXf pc2, float eps, VectorXf t_init, float s_init, MatrixXf &R_icp, VectorXf &t_icp, float &s_icp,
+    int &itCt, int maxIcpIt, float icpEps, int maxDepth, float inlier_portion, float maxTime);
 int get_inlier_number(float inlier_portion, int number_points);
 float trimmed_scaling_icp(MatrixXf pc1, MatrixXf pc2, MatrixXf &R_result, VectorXf &t_result, float &s_result, MatrixXf R_init,
         VectorXf t_init, float s_init, float eps, int maxIt, float inlier_portion);
@@ -88,6 +88,9 @@ float getPassedTime(struct timeval start);
 MatrixXf getAARot(VectorXf r);
 Cube* createCube(VectorXf r0, float half_edge_length, int depth);
 bool betterThan(Cube *cube1, Cube *cube2);
+
+boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > random_filter(boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pc, int number_points);
+MatrixXf random_filter(MatrixXf pc, int number_points);
 
 
 
@@ -142,6 +145,8 @@ public:
 
         MatrixXf template_pointcloud = getTemplatePointcloud(path, filename);
 
+        template_pointcloud = random_filter(template_pointcloud, 200);
+
 
         /*float discardPointThreshold = 1.5;
         float maxRadius = FLT_MIN;
@@ -182,14 +187,18 @@ public:
         t_icp = currentPosition;
         s_icp = 1.;
 
-        float error;
         int itCt = 0;
 
-        //bool icp_success = find_pointcloud_alignment(template_pointcloud, currentTargetPointcloud, 1, currentPosition, 1., R_icp, t_icp, s_icp, error,
-        //                                             itCt, 100, 1e-3, 4, 0.4, 10);
-        //cout<<"icp success: "<<icp_success<<", error: "<<error<<endl;
+        //float error = find_pointcloud_alignment(template_pointcloud, currentTargetPointcloud, 1, currentPosition, 1., R_icp, t_icp, s_icp,
+        //                                             itCt, 300, 1e-4, 1, 0.4, 10);
+        //cout<<"icp error: "<<error<<endl;
 
-        error = trimmed_scaling_icp(template_pointcloud, currentTargetPointcloud, R_icp, t_icp, s_icp, currentRotation, currentPosition, 1.0, 1e-3, 100, 0.4);
+        //saveDataToFile(currentPosition, currentRotation, template_pointcloud, currentTargetPointcloud);
+
+        //t_icp = currentPosition;
+        //R_icp = MatrixXf::Identity(3,3);
+
+        float error = trimmed_scaling_icp(template_pointcloud, currentTargetPointcloud, R_icp, t_icp, s_icp, currentRotation, currentPosition, 1.0, 1e-7, 300, 0.4);
 
         cout<<"error: "<<error<<endl;
 
@@ -301,6 +310,8 @@ void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pointcloud) {
     boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pc_ (new pcl::PointCloud<pcl::PointXYZ>());
     pcl::fromROSMsg(*pointcloud, *pc_);
 
+    //pc_ = random_filter(pc_, 2000);
+
     //cout<<"Ich habe 1 Pointcloud empfangen: " << pc_->at(0) <<endl;
 
     currentTargetPointcloud = MatrixXf(3,pc_->size());
@@ -313,12 +324,6 @@ void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pointcloud) {
 
 
     targetKdTree.setInputCloud (pc_);
-
-    boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pc2_ (new pcl::PointCloud<pcl::PointXYZ>());
-
-    /*for (int i = 0; i < pc_->size(); i++) {
-        pc2_->insert(i,)
-    }*/
 
     pointcloudReceived = true;
 }
@@ -435,8 +440,8 @@ void saveDataToFile(VectorXf transformation, MatrixXf rotation, MatrixXf templat
 // ************************************ ICP algorithm **************************************************
 // *****************************************************************************************************
 
-bool find_pointcloud_alignment(MatrixXf pc1, MatrixXf pc2, float eps, VectorXf t_init, float s_init, MatrixXf &R_icp, VectorXf &t_icp, float &s_icp,
-    float &error, int &itCt, int maxIcpIt, float icpEps, int maxDepth, float inlier_portion, float maxTime) {
+float find_pointcloud_alignment(MatrixXf pc1, MatrixXf pc2, float eps, VectorXf t_init, float s_init, MatrixXf &R_icp, VectorXf &t_icp, float &s_icp,
+    int &itCt, int maxIcpIt, float icpEps, int maxDepth, float inlier_portion, float maxTime) {
 
     struct timeval start;
     gettimeofday(&start, NULL);
@@ -447,11 +452,32 @@ bool find_pointcloud_alignment(MatrixXf pc1, MatrixXf pc2, float eps, VectorXf t
     volatile bool success = false;
 
     itCt = 0;
+    float minErr = FLT_MAX;
 
-    #pragma omp parallel for shared(success, R_icp, t_icp, s_icp)
+
+
+
+
+
+
+
+    VectorXf t_star(3);
+    MatrixXf R_star(3,3);
+    t_star << 0.453278, -0.00371148, 0.90559;
+    R_star << 0.0155734, -0.999806, 0.0120183, 0.999878, 0.0155607, -0.00114424, 0.00095701, 0.0120346, 0.999927;
+
+
+
+
+
+    //#pragma omp parallel for shared(success, R_icp, t_icp, s_icp)
     for (int i = 0; i < queueLength; i++) {
-        if (success == true || getPassedTime(start) > maxTime) {
-            continue;
+        // send feedback
+        //PointcloudAlignmentAction::feedback_.percentage = ((float) i) / ((float) queueLength);
+        cout<<"percentage: "<< ((float) i) / ((float) queueLength)*100.<<"%, iteration "<<i<<"/"<<queueLength << endl;
+
+        if (i != 0 && getPassedTime(start) > maxTime) {
+            break;
         }
 
         MatrixXf R_i(3,3);
@@ -460,8 +486,20 @@ bool find_pointcloud_alignment(MatrixXf pc1, MatrixXf pc2, float eps, VectorXf t
 
         //int number_inliers = get_inlier_number(inlier_portion, pc1.cols());
 
-        float err = trimmed_scaling_icp(pc1, pc2, R_i, t_i, s_i, getAARot(Q[itCt++]->r0), t_init, s_init, 1e-4, maxIcpIt, inlier_portion);
-        #pragma omp critical
+        float err = trimmed_scaling_icp(pc1, pc2, R_i, t_i, s_i, getAARot(Q[itCt++]->r0), t_init, s_init, icpEps, maxIcpIt, inlier_portion);
+
+        float err_star = (R_star-R_i).norm() + (t_star - t_i).norm() + abs(1.-s_i);
+
+        //if (err < minErr && s_i > 0.1) {
+        if (err_star < minErr) {
+            minErr = err;
+
+            R_icp = R_i;
+            t_icp = t_i;
+            s_icp = s_i;
+        }
+
+        /*#pragma omp critical
         {
             if (err < eps && s_i > 0.8) {
                 error = err;
@@ -475,10 +513,14 @@ bool find_pointcloud_alignment(MatrixXf pc1, MatrixXf pc2, float eps, VectorXf t
 
                 success = true;
             }
-        }
+        }*/
     }
 
-    return success;
+    //R_icp = R_star;
+    //t_icp = t_star;
+    //s_icp = 1.;
+
+    return minErr;
 }
 
 int get_inlier_number(float inlier_portion, int number_points) {
@@ -511,7 +553,7 @@ float trimmed_scaling_icp(MatrixXf pc1, MatrixXf pc2, MatrixXf &R_result, Vector
 
     while ((((R_result-R_old).norm() + (t_result-t_old).norm() + abs(s_result-s_old) > eps) || (itCt == 0)) && (itCt < maxIt)) {
         itCt++;
-        cout<<"it: "<<itCt<<endl;
+        //cout<<"it: "<<itCt<<endl;
 
         R_old = R_result;
         t_old = t_result;
@@ -526,7 +568,9 @@ float trimmed_scaling_icp(MatrixXf pc1, MatrixXf pc2, MatrixXf &R_result, Vector
         apply_transformation(pc1, pc1_proj, R_result, t_result, s_result);
     }
 
+    cout<<"iterations needed: "<<itCt<<endl;
     return calc_error(pc1_proj, pc2, inlier_portion);
+
 }
 
 void trim_pc(MatrixXf pc, MatrixXf cp, VectorXf distances, MatrixXf &pc_trimmed, MatrixXf &cp_trimmed, int number_inliers) {
@@ -595,9 +639,26 @@ void find_transformation(MatrixXf pc1, MatrixXf pc2, MatrixXf &R, VectorXf &t, f
     W(2,1) = (pc1_norm.block(2,0,1,pc1.cols()) * pc2_norm.block(1,0,1,pc2.cols()).transpose())(0);
     W(2,2) = (pc1_norm.block(2,0,1,pc1.cols()) * pc2_norm.block(2,0,1,pc2.cols()).transpose())(0);
 
-
-
     JacobiSVD<MatrixXf> svd(W, ComputeThinU | ComputeThinV);
+
+    MatrixXf U = -svd.matrixU();
+    MatrixXf V = -svd.matrixV();
+
+    R = U*V.transpose();
+    R = R.inverse();
+
+    if (R.determinant() < 0) {
+
+        V(0,2) = -V(0,2);
+        V(1,2) = -V(1,2);
+        V(2,2) = -V(2,2);
+        R = V*svd.matrixU().transpose();
+    }
+
+    t = mean2 - R*mean1;
+    s = 1.;
+
+    /*JacobiSVD<MatrixXf> svd(W, ComputeThinU | ComputeThinV);
 
     MatrixXf U = -svd.matrixU();
     MatrixXf V = -svd.matrixV();
@@ -623,7 +684,7 @@ void find_transformation(MatrixXf pc1, MatrixXf pc2, MatrixXf &R, VectorXf &t, f
 
     s = (((float) tmp1.rows())*((float) tmp1.cols())*tmp1.norm()) / (((float) tmp2.rows())*((float) tmp2.cols())*tmp2.norm());
 
-    t = mean2 - s*R*mean1;
+    t = mean2 - s*R*mean1;*/
 }
 
 void apply_transformation(MatrixXf pc, MatrixXf &pc_proj, MatrixXf R, VectorXf t, float s) {
@@ -891,10 +952,43 @@ bool betterThan(Cube *cube1, Cube *cube2) {
     }
 }
 
-MatrixXf random_filter(MatrixXf pc, int number_of_points) {
-    //if (number_of_points > pc.)
+boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > random_filter(boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pc, int number_points) {
+    if (number_points > pc->size()) {
+        return pc;
+    }
 
-    int filtered_size = (int) (sampling_pc * ((float) pc.cols()));
+    boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pc_filtered;
+    cout<<"hier"<<endl;
+    pc_filtered->width = 2000;
+    //pc_filtered->width = number_points;
+    cout<<"hier"<<endl;
+    pc_filtered->height   = 1;
+    cout<<"hier"<<endl;
+    pc_filtered->is_dense = pc->is_dense;
+    cout<<"hier"<<endl;
+    pc_filtered->points.resize (pc_filtered->width * pc_filtered->height);
+    cout<<"hier"<<endl;
+
+    vector<int> indices;
+    for (int i = 0; i < pc->size(); i++) {
+        indices.push_back(i);
+    }
+    random_shuffle(indices.begin(), indices.end());
+
+    for (int i = 0; i < number_points; i++) {
+        cout<<"i: "<<i<<endl;
+        pc_filtered->points[i].x = pc->at(indices[i]).x;
+        pc_filtered->points[i].y = pc->at(indices[i]).y;
+        pc_filtered->points[i].z = pc->at(indices[i]).z;
+
+    }
+
+}
+
+MatrixXf random_filter(MatrixXf pc, int number_points) {
+    if (number_points > pc.cols()) {
+        return pc;
+    }
 
     vector<int> indices;
     for (int i = 0; i < pc.cols(); i++) {
@@ -902,8 +996,8 @@ MatrixXf random_filter(MatrixXf pc, int number_of_points) {
     }
     random_shuffle(indices.begin(), indices.end());
 
-    MatrixXf filtered_pc(pc.rows(), filtered_size);
-    for (int i = 0; i < filtered_size; i++) {
+    MatrixXf filtered_pc(pc.rows(), number_points);
+    for (int i = 0; i < number_points; i++) {
         filtered_pc(0,i) = pc(0, indices[i]);
         filtered_pc(1,i) = pc(1, indices[i]);
         filtered_pc(2,i) = pc(2, indices[i]);
