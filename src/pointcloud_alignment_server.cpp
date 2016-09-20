@@ -62,8 +62,7 @@ void saveDataToFile(VectorXf transformation, MatrixXf rotation, MatrixXf templat
 float find_pointcloud_alignment(MatrixXf pc1, MatrixXf pc2, float eps, VectorXf t_init, float s_init, MatrixXf &R_icp, VectorXf &t_icp, float &s_icp,
     int &itCt, int maxIcpIt, float icpEps, int maxDepth, float inlier_portion, float maxTime);
 int get_inlier_number(float inlier_portion, int number_points);
-float trimmed_scaling_icp(MatrixXf pc1, MatrixXf pc2, MatrixXf &R_result, VectorXf &t_result, float &s_result, MatrixXf R_init,
-        VectorXf t_init, float s_init, float eps, int maxIt, float inlier_portion);
+float trimmed_scaling_icp(MatrixXf pc1, MatrixXf pc2, MatrixXf &R, VectorXf &t, float &s, float eps, int maxIt, float inlier_portion);
 void trim_pc(MatrixXf pc, MatrixXf cp, VectorXf distances, MatrixXf &pc_trimmed, MatrixXf &cp_trimmed, int number_inliers);
 void find_correspondences(MatrixXf pc1, MatrixXf pc2, MatrixXf &cp, VectorXf &distances);
 void find_transformation(MatrixXf pc1, MatrixXf pc2, MatrixXf &R, VectorXf &t, float &s);
@@ -94,7 +93,13 @@ MatrixXf random_filter(MatrixXf pc, int number_points);
 
 
 
+
+float local_icp(MatrixXf pc1, MatrixXf pc2, MatrixXf &R, VectorXf &t, float &s, float eps, int maxIt, float inlier_portion);
+
+
+
 static int currentTemplateId;
+static string currentTemplateName;
 static VectorXf currentPosition;
 static MatrixXf currentRotation;
 static MatrixXf currentTargetPointcloud;
@@ -106,46 +111,126 @@ class PointcloudAlignmentAction
 private:
 
 
+
 protected:
     ros::NodeHandle nh_;
     actionlib::SimpleActionServer<object_template_alignment_plugin::PointcloudAlignmentAction> as_;
     std::string action_name_;
     object_template_alignment_plugin::PointcloudAlignmentFeedback feedback_;
     object_template_alignment_plugin::PointcloudAlignmentResult result_;
+    ros::Subscriber sub1_, sub2_, sub3_;
 
 public:
     PointcloudAlignmentAction(std::string name) :
     as_(nh_, name, boost::bind(&PointcloudAlignmentAction::executeCB, this, _1), false),
     action_name_(name) {
+
+        sub1_ = nh_.subscribe("/flor/worldmodel/ocs/cloud_result", 1000, &PointcloudAlignmentAction::pointcloudCallback, this);
+
+        sub2_ = nh_.subscribe("/flor/ocs/object_selection", 1000, &PointcloudAlignmentAction::templateSelectionCallback, this);
+
+        sub3_ = nh_.subscribe("/template/list", 1000, &PointcloudAlignmentAction::templateListCallback, this);
+
         as_.start();
     }
 
     ~PointcloudAlignmentAction(void) {}
 
+    void templateListCallback(const vigir_object_template_msgs::TemplateServerList::ConstPtr& templateList) {
+        //cout<<"I received a new template list"<<endl;
+        int pos = -1;
+        for (int i = 0; i < templateList->template_id_list.size(); i++) {
+
+            if (templateList->template_id_list.at(i) == currentTemplateId) {
+                pos = i;
+                break;
+            }
+        }
+
+
+
+        if (pos != -1) {
+            currentTemplateName = templateList->template_list.at(pos);
+
+            currentPosition = VectorXf(3);
+            currentPosition << templateList->pose.at(pos).pose.position.x,
+                               templateList->pose.at(pos).pose.position.y,
+                               templateList->pose.at(pos).pose.position.z;
+
+            currentRotation = MatrixXf(3,3);
+            float qx = templateList->pose.at(pos).pose.orientation.x;
+            float qy = templateList->pose.at(pos).pose.orientation.y;
+            float qz = templateList->pose.at(pos).pose.orientation.z;
+            float qw = templateList->pose.at(pos).pose.orientation.w;
+
+            currentRotation <<
+                1.0f - 2.0f*qy*qy - 2.0f*qz*qz, 2.0f*qx*qy - 2.0f*qz*qw, 2.0f*qx*qz + 2.0f*qy*qw,
+                2.0f*qx*qy + 2.0f*qz*qw, 1.0f - 2.0f*qx*qx - 2.0f*qz*qz, 2.0f*qy*qz - 2.0f*qx*qw,
+                2.0f*qx*qz - 2.0f*qy*qw, 2.0f*qy*qz + 2.0f*qx*qw, 1.0f - 2.0f*qx*qx - 2.0f*qy*qy;
+        }
+
+        templateListReceived = true;
+    }
+
+
+
+    void templateSelectionCallback(const vigir_ocs_msgs::OCSObjectSelection::ConstPtr& newTemplate) {
+        cout<<"I received a new template"<<endl;
+        currentTemplateId = newTemplate->id;
+
+        templateReceived = true;
+    }
+
+    void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pointcloud) {
+        boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pc_ (new pcl::PointCloud<pcl::PointXYZ>());
+        pcl::fromROSMsg(*pointcloud, *pc_);
+
+        //pc_ = random_filter(pc_, 2000);
+
+        cout<<"I received a new pointcloud" <<endl;
+
+        currentTargetPointcloud = MatrixXf(3,pc_->size());
+
+        for (int i = 0; i < pc_->size(); i++) {
+            currentTargetPointcloud(0,i) = pc_->at(i).x;
+            currentTargetPointcloud(1,i) = pc_->at(i).y;
+            currentTargetPointcloud(2,i) = pc_->at(i).z;
+        }
+
+        targetKdTree.setInputCloud (pc_);
+
+        pointcloudReceived = true;
+    }
+
+
     void executeCB(const object_template_alignment_plugin::PointcloudAlignmentGoalConstPtr &goal) {
-        if (pointcloudReceived == false || templateReceived == false || templateListReceived == false) {
+        if (pointcloudReceived == false || templateReceived == false) {
             if (pointcloudReceived == false) {
                 ROS_ERROR("No pointcloud received - Please send a pointcloud request first.");
             }
             if (templateReceived == false) {
                 ROS_ERROR("No template received - Please choose template and double click on it.");
             }
-            if (templateListReceived == false) {
-                ROS_ERROR("No template position available - Please move the template to send position signal.");
-            }
+            as_.setAborted();
 
             return;
         }
 
         bool success = true;
 
-        std::string filename = "DRC_drill.pcd";
-        //std::string path = "~/thor/src/vigir/vigir_templates/vigir_template_library/object_library/tools/";
-        std::string path = "vigir/vigir_templates/vigir_template_library/object_library/tools/";
+
+        std::string filename = currentTemplateName;
+        size_t dot_pos = currentTemplateName.find_last_of('.');
+        filename.insert(dot_pos, ".pcd");
+        filename = filename.substr(0, dot_pos+4);
+
+
+        std::string path = "/home/sebastian/thor/src/vigir/vigir_templates/vigir_template_library/object_library/";
+        //std::string path = "vigir/vigir_templates/vigir_template_library/object_library/tools/";
 
         MatrixXf template_pointcloud = getTemplatePointcloud(path, filename);
 
-        template_pointcloud = random_filter(template_pointcloud, 200);
+        template_pointcloud = random_filter(template_pointcloud, 100);
 
 
         /*float discardPointThreshold = 1.5;
@@ -181,34 +266,19 @@ public:
         VectorXf t_icp(3);
         float s_icp;
 
-
-        R_icp;
         R_icp = currentRotation;
         t_icp = currentPosition;
         s_icp = 1.;
 
-        int itCt = 0;
-
+        //int itCt = 0;
         //float error = find_pointcloud_alignment(template_pointcloud, currentTargetPointcloud, 1, currentPosition, 1., R_icp, t_icp, s_icp,
-        //                                             itCt, 300, 1e-4, 1, 0.4, 10);
+        //                                             itCt, 300, 1e-7, 1, 0.4, 10);
         //cout<<"icp error: "<<error<<endl;
 
-        //saveDataToFile(currentPosition, currentRotation, template_pointcloud, currentTargetPointcloud);
-
-        //t_icp = currentPosition;
-        //R_icp = MatrixXf::Identity(3,3);
-
-        float error = trimmed_scaling_icp(template_pointcloud, currentTargetPointcloud, R_icp, t_icp, s_icp, currentRotation, currentPosition, 1.0, 1e-7, 300, 0.4);
+        float error = trimmed_scaling_icp(template_pointcloud, currentTargetPointcloud, R_icp, t_icp, s_icp, 1e-7, 100, 0.4);
+        //float error = local_icp(template_pointcloud, currentTargetPointcloud, R_icp, t_icp, s_icp, 1e-7, 300, 0.4);
 
         cout<<"error: "<<error<<endl;
-
-        //saveDataToFile(currentPosition, currentRotation, template_pointcloud, currentTargetPointcloud);
-
-        //R_icp = currentRotation;
-        //t_icp = currentPosition;
-        //s_icp = 1.;
-
-
 
         if (success)
         {
@@ -225,6 +295,7 @@ public:
         orientation.z = (R_icp(1,0) - R_icp(0,1)) / (4.*orientation.w);
 
 
+        // send current Post to align_template_srv
         ros::ServiceClient align_template_client;
         vigir_object_template_msgs::SetAlignObjectTemplate align_template_srv_;
 
@@ -233,22 +304,19 @@ public:
         align_template_srv_.request.template_id = currentTemplateId;
         align_template_srv_.request.pose.pose.position = position;
         align_template_srv_.request.pose.pose.orientation = orientation;
+        align_template_srv_.request.pose.header.stamp = ros::Time::now();
+        //align_template_srv_.request.pose.header.frame_id = 0/*currentTemplateFrameId*/; // TODO
         if (!align_template_client.call(align_template_srv_))
         {
            ROS_ERROR("Failed to call service request align template");
-           cout<<"align template client success"<<endl;
-        } else {
-            cout<<"align template client failed"<<endl;
         }
 
+        // send goal
         geometry_msgs::PoseStamped result;
 
         result.pose.orientation = orientation;
         result.pose.position = position;
         result_.transformation_matrix = result;
-
-        // TODO: header setzen
-        result_.transformation_matrix.header.stamp = ros::Time::now();
 
         ROS_INFO("%s: Succeeded", action_name_.c_str());
         as_.setSucceeded(result_);
@@ -258,88 +326,11 @@ public:
 };
 
 
-
-void templateListCallback(const vigir_object_template_msgs::TemplateServerList::ConstPtr& templateList) {
-    //cout<<"I received a new template list"<<endl;
-    int pos = -1;
-    for (int i = 0; i < templateList->template_id_list.size(); i++) {
-
-        if (templateList->template_id_list.at(i) == currentTemplateId) {
-            pos = i;
-            break;
-        }
-    }
-
-    //templateList->template_status_list.at(0).header;
-
-
-    if (pos != -1) {
-        currentPosition = VectorXf(3);
-        currentPosition << templateList->pose.at(pos).pose.position.x,
-                           templateList->pose.at(pos).pose.position.y,
-                           templateList->pose.at(pos).pose.position.z;
-
-        currentRotation = MatrixXf(3,3);
-        float qx = templateList->pose.at(pos).pose.orientation.x;
-        float qy = templateList->pose.at(pos).pose.orientation.y;
-        float qz = templateList->pose.at(pos).pose.orientation.z;
-        float qw = templateList->pose.at(pos).pose.orientation.w;
-
-        currentRotation <<
-            1.0f - 2.0f*qy*qy - 2.0f*qz*qz, 2.0f*qx*qy - 2.0f*qz*qw, 2.0f*qx*qz + 2.0f*qy*qw,
-            2.0f*qx*qy + 2.0f*qz*qw, 1.0f - 2.0f*qx*qx - 2.0f*qz*qz, 2.0f*qy*qz - 2.0f*qx*qw,
-            2.0f*qx*qz - 2.0f*qy*qw, 2.0f*qy*qz + 2.0f*qx*qw, 1.0f - 2.0f*qx*qx - 2.0f*qy*qy;
-    }
-
-    templateListReceived = true;
-}
-
-
-
-void templateSelectionCallback(const vigir_ocs_msgs::OCSObjectSelection::ConstPtr& newTemplate) {
-    cout<<"I received a new template"<<endl;
-    currentTemplateId = newTemplate->id;
-
-    templateReceived = true;
-}
-
-void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pointcloud) {
-
-
-
-    boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pc_ (new pcl::PointCloud<pcl::PointXYZ>());
-    pcl::fromROSMsg(*pointcloud, *pc_);
-
-    //pc_ = random_filter(pc_, 2000);
-
-    //cout<<"Ich habe 1 Pointcloud empfangen: " << pc_->at(0) <<endl;
-
-    currentTargetPointcloud = MatrixXf(3,pc_->size());
-
-    for (int i = 0; i < pc_->size(); i++) {
-        currentTargetPointcloud(0,i) = pc_->at(i).x;
-        currentTargetPointcloud(1,i) = pc_->at(i).y;
-        currentTargetPointcloud(2,i) = pc_->at(i).z;
-    }
-
-
-    targetKdTree.setInputCloud (pc_);
-
-    pointcloudReceived = true;
-}
-
 int main(int argc, char** argv) {
     ros::init(argc, argv, "pointcloud_alignment");
 
-    ros::NodeHandle n;
-
-    ros::Subscriber sub1 = n.subscribe("/flor/worldmodel/ocs/cloud_result", 1000, pointcloudCallback);
-
-    ros::Subscriber sub2 = n.subscribe("/flor/ocs/object_selection", 1000, templateSelectionCallback);
-
-    ros::Subscriber sub3 = n.subscribe("/template/list", 1000, templateListCallback);
-
     PointcloudAlignmentAction pointcloud_alignment(ros::this_node::getName());
+
     ros::spin();
 
     return 0;
@@ -354,16 +345,15 @@ std::string get_working_path()
 
 MatrixXf getTemplatePointcloud(string path, string filename) {
     std::ifstream file;
-    string full_filename = path + filename; // TODO: / am Ende von path abfragen
-    // TODO: Endung auf .pcd ueberpruefen
+    string full_filename = path + filename;
 
-    cout<<"full filename: "<<full_filename<<endl;
-
-    cout<<"cur dir: "<<get_working_path()<<endl;
+    size_t dot_pos = filename.find_last_of('.');
+    string file_type = filename.substr(dot_pos + 1, string::npos);
 
     file.open(full_filename.c_str());
-    if (!file.is_open()) {
+    if (!file.is_open() || file_type.compare("pcd") != 0) {
         std::cerr<<"Error while reading the input file!"<<std::endl;
+        std::cerr<<"requested file "<<full_filename<<" does not exist!"<<endl;
         return MatrixXf::Identity(3,3);
     }
 
@@ -454,71 +444,32 @@ float find_pointcloud_alignment(MatrixXf pc1, MatrixXf pc2, float eps, VectorXf 
     itCt = 0;
     float minErr = FLT_MAX;
 
-
-
-
-
-
-
-
     VectorXf t_star(3);
     MatrixXf R_star(3,3);
     t_star << 0.453278, -0.00371148, 0.90559;
     R_star << 0.0155734, -0.999806, 0.0120183, 0.999878, 0.0155607, -0.00114424, 0.00095701, 0.0120346, 0.999927;
 
-
-
-
-
-    //#pragma omp parallel for shared(success, R_icp, t_icp, s_icp)
     for (int i = 0; i < queueLength; i++) {
-        // send feedback
-        //PointcloudAlignmentAction::feedback_.percentage = ((float) i) / ((float) queueLength);
         cout<<"percentage: "<< ((float) i) / ((float) queueLength)*100.<<"%, iteration "<<i<<"/"<<queueLength << endl;
 
         if (i != 0 && getPassedTime(start) > maxTime) {
             break;
         }
 
-        MatrixXf R_i(3,3);
-        VectorXf t_i(3);
-        float s_i;
+        MatrixXf R_i = getAARot(Q[itCt++]->r0);
+        VectorXf t_i = t_init;
+        float s_i = s_init;
 
-        //int number_inliers = get_inlier_number(inlier_portion, pc1.cols());
+        float err = trimmed_scaling_icp(pc1, pc2, R_i, t_i, s_i, icpEps, maxIcpIt, inlier_portion);
 
-        float err = trimmed_scaling_icp(pc1, pc2, R_i, t_i, s_i, getAARot(Q[itCt++]->r0), t_init, s_init, icpEps, maxIcpIt, inlier_portion);
-
-        float err_star = (R_star-R_i).norm() + (t_star - t_i).norm() + abs(1.-s_i);
-
-        //if (err < minErr && s_i > 0.1) {
-        if (err_star < minErr) {
+        if (err < minErr && s_i > 0.8) {
             minErr = err;
 
             R_icp = R_i;
             t_icp = t_i;
             s_icp = s_i;
         }
-
-        /*#pragma omp critical
-        {
-            if (err < eps && s_i > 0.8) {
-                error = err;
-
-                R_icp = R_i;
-                t_icp = t_i;
-                s_icp = s_i;
-
-                cout<<"success!!!"<<endl;
-                cout<<R_icp<<endl<<t_icp<<endl<<s_icp<<endl;
-
-                success = true;
-            }
-        }*/
     }
-
-    //R_icp = R_star;
-    //t_icp = t_star;
-    //s_icp = 1.;
 
     return minErr;
 }
@@ -527,35 +478,58 @@ int get_inlier_number(float inlier_portion, int number_points) {
     return (int) floor(inlier_portion*((float) number_points));
 }
 
-float trimmed_scaling_icp(MatrixXf pc1, MatrixXf pc2, MatrixXf &R_result, VectorXf &t_result, float &s_result, MatrixXf R_init,
-        VectorXf t_init, float s_init, float eps, int maxIt, float inlier_portion) {
+float noise() {
+    float range = 5e-3;
+    float random_number = ((float) rand() / ((float ) RAND_MAX));
+    return -(range/2.) + range*random_number;
+}
 
+float local_icp(MatrixXf pc1, MatrixXf pc2, MatrixXf &R, VectorXf &t, float &s, float eps, int maxIt, float inlier_portion) {
+    float err;
+    for (int i = 0; i < 5; i++) {
+        err = trimmed_scaling_icp(pc1, pc2, R, t, s, eps, 100, 0.4);
+    }
+    return err;
+}
+
+float trimmed_scaling_icp(MatrixXf pc1, MatrixXf pc2, MatrixXf &R, VectorXf &t, float &s, float eps, int maxIt, float inlier_portion) {
     int itCt = 0;
-
-    MatrixXf R_old = R_init;
-    VectorXf t_old = t_init;
-    float s_old = s_init;
-
-    R_result = R_init;
-    t_old = t_init;
-    s_old = s_init;
-
     MatrixXf cp(pc1.rows(), pc1.cols());
     VectorXf distances(pc1.cols());
     MatrixXf pc1_proj(pc1.rows(), pc1.cols());
+    MatrixXf R_old(3,3);
+    VectorXf t_old(3);
+    float s_old, err_old , err = FLT_MAX;
 
     int number_inliers = get_inlier_number(inlier_portion, pc1.cols());
 
     MatrixXf pc1_trimmed(3, number_inliers);
     MatrixXf cp_trimmed(3, number_inliers);
 
-    apply_transformation(pc1, pc1_proj, R_init, t_init, s_init);
+    //int noiseAddedCounter = 0;
+    //int noiseAddNumber = 20;
 
-    while ((((R_result-R_old).norm() + (t_result-t_old).norm() + abs(s_result-s_old) > eps) || (itCt == 0)) && (itCt < maxIt)) {
+
+    while ((((R-R_old).norm() + (t-t_old).norm() + abs(s-s_old) > eps) + abs(err-err_old) || (itCt == 0)) && (itCt < maxIt)) {
         itCt++;
         //cout<<"it: "<<itCt<<endl;
 
-        R_old = R_result;
+        R_old = R;
+        t_old = t;
+        s_old = s;
+        err_old = err;
+
+        apply_transformation(pc1, pc1_proj, R, t, s);
+
+        find_correspondences(pc1_proj, pc2, cp, distances);
+
+        trim_pc(pc1, cp, distances, pc1_trimmed, cp_trimmed, number_inliers);
+
+        find_transformation(pc1_trimmed, cp_trimmed, R, t, s);
+
+        err = calc_error(pc1, pc2, inlier_portion); // TODO: wieder raus nehmen
+
+        /*R_old = R_result;
         t_old = t_result;
         s_old = s_result;
 
@@ -565,12 +539,28 @@ float trimmed_scaling_icp(MatrixXf pc1, MatrixXf pc2, MatrixXf &R_result, Vector
 
         find_transformation(pc1_trimmed, cp_trimmed, R_result, t_result, s_result);
 
-        apply_transformation(pc1, pc1_proj, R_result, t_result, s_result);
+        apply_transformation(pc1, pc1_proj, R_result, t_result, s_result);*/
+
+        /*if (((R-R_old).norm() + (t-t_old).norm() + abs(s-s_old)) < eps && noiseAddedCounter < noiseAddNumber) {
+            cout<<"adding noise in iteration "<<itCt<<endl;
+            noiseAddedCounter++;
+            MatrixXf R_noise(3,3);
+            VectorXf t_noise(3);
+            R_noise << noise(),noise(),noise(),noise(),noise(),noise(),noise(),noise(),noise();
+            t_noise << noise(),noise(),noise();
+            //cout<<R_result<<endl;
+            R += R_noise;
+            //cout<<R_result<<endl;
+            t += t_noise;
+        }*/
+
     }
 
     cout<<"iterations needed: "<<itCt<<endl;
-    return calc_error(pc1_proj, pc2, inlier_portion);
 
+    //cout<<"end: "<<t_result<<endl<<R_result<<endl<<endl;
+
+    return calc_error(pc1_proj, pc2, inlier_portion);
 }
 
 void trim_pc(MatrixXf pc, MatrixXf cp, VectorXf distances, MatrixXf &pc_trimmed, MatrixXf &cp_trimmed, int number_inliers) {
@@ -639,26 +629,9 @@ void find_transformation(MatrixXf pc1, MatrixXf pc2, MatrixXf &R, VectorXf &t, f
     W(2,1) = (pc1_norm.block(2,0,1,pc1.cols()) * pc2_norm.block(1,0,1,pc2.cols()).transpose())(0);
     W(2,2) = (pc1_norm.block(2,0,1,pc1.cols()) * pc2_norm.block(2,0,1,pc2.cols()).transpose())(0);
 
+
+
     JacobiSVD<MatrixXf> svd(W, ComputeThinU | ComputeThinV);
-
-    MatrixXf U = -svd.matrixU();
-    MatrixXf V = -svd.matrixV();
-
-    R = U*V.transpose();
-    R = R.inverse();
-
-    if (R.determinant() < 0) {
-
-        V(0,2) = -V(0,2);
-        V(1,2) = -V(1,2);
-        V(2,2) = -V(2,2);
-        R = V*svd.matrixU().transpose();
-    }
-
-    t = mean2 - R*mean1;
-    s = 1.;
-
-    /*JacobiSVD<MatrixXf> svd(W, ComputeThinU | ComputeThinV);
 
     MatrixXf U = -svd.matrixU();
     MatrixXf V = -svd.matrixV();
@@ -684,7 +657,9 @@ void find_transformation(MatrixXf pc1, MatrixXf pc2, MatrixXf &R, VectorXf &t, f
 
     s = (((float) tmp1.rows())*((float) tmp1.cols())*tmp1.norm()) / (((float) tmp2.rows())*((float) tmp2.cols())*tmp2.norm());
 
-    t = mean2 - s*R*mean1;*/
+    s = 1.;
+
+    t = mean2 - s*R*mean1;
 }
 
 void apply_transformation(MatrixXf pc, MatrixXf &pc_proj, MatrixXf R, VectorXf t, float s) {
@@ -958,16 +933,11 @@ boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > random_filter(boost::shared_p
     }
 
     boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pc_filtered;
-    cout<<"hier"<<endl;
     pc_filtered->width = 2000;
     //pc_filtered->width = number_points;
-    cout<<"hier"<<endl;
     pc_filtered->height   = 1;
-    cout<<"hier"<<endl;
     pc_filtered->is_dense = pc->is_dense;
-    cout<<"hier"<<endl;
     pc_filtered->points.resize (pc_filtered->width * pc_filtered->height);
-    cout<<"hier"<<endl;
 
     vector<int> indices;
     for (int i = 0; i < pc->size(); i++) {
