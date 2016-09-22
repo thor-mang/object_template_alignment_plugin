@@ -10,6 +10,7 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
   std_msgs
+  sensor_msgs
   geometry_msgs
   vigir_object_template_msgs
   vigir_ocs_msgs
@@ -82,7 +83,7 @@ add_action_files(
 # )
 
 generate_messages(
-  DEPENDENCIES actionlib_msgs std_msgs geometry_msgs # Or other packages containing msgs
+  DEPENDENCIES actionlib_msgs std_msgs sensor_msgs geometry_msgs # Or other packages containing msgs
 )
 
 ################################################

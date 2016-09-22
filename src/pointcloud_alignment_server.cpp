@@ -225,7 +225,7 @@ public:
         filename = filename.substr(0, dot_pos+4);
 
 
-        std::string path = "/home/sebastian/thor/src/vigir/vigir_templates/vigir_template_library/object_library/";
+        std::string path = "/home/kal/thor/src/vigir/vigir_templates/vigir_template_library/object_library/";
         //std::string path = "vigir/vigir_templates/vigir_template_library/object_library/tools/";
 
         MatrixXf template_pointcloud = getTemplatePointcloud(path, filename);
@@ -316,7 +316,7 @@ public:
 
         result.pose.orientation = orientation;
         result.pose.position = position;
-        result_.transformation_matrix = result;
+        result_.transformation_pose = result;
 
         ROS_INFO("%s: Succeeded", action_name_.c_str());
         as_.setSucceeded(result_);
