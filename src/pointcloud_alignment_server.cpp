@@ -275,6 +275,14 @@ public:
         //                                             itCt, 300, 1e-7, 1, 0.4, 10);
         //cout<<"icp error: "<<error<<endl;
 
+        //Test examples
+        //goal->source_pointcloud
+        //goal->target_pointcloud
+//        sensor_msgs::PointCloud2 pointcloud_2;
+//        boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > cloud (new pcl::PointCloud<pcl::PointXYZ>());
+//        pcl::io::loadPCDFile("path/to/pcd",*cloud);
+//        pcl::toROSMsg(*cloud,pointcloud_2);
+
         float error = trimmed_scaling_icp(template_pointcloud, currentTargetPointcloud, R_icp, t_icp, s_icp, 1e-7, 100, 0.4);
         //float error = local_icp(template_pointcloud, currentTargetPointcloud, R_icp, t_icp, s_icp, 1e-7, 300, 0.4);
 
