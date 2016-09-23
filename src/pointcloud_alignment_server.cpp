@@ -295,7 +295,7 @@ public:
 
         result.pose.orientation = orientation;
         result.pose.position = position;
-        result_.transformation_matrix = result;
+        result_.transformation_pose = result;
 
         ROS_INFO("%s: Succeeded", action_name_.c_str());
         as_.setSucceeded(result_);
@@ -401,11 +401,49 @@ void saveDataToFile(VectorXf transformation, MatrixXf rotation, MatrixXf templat
 // ************************************ ICP algorithm **************************************************
 // *****************************************************************************************************
 
+void printDistances(VectorXf distances) {
+    ofstream file;
+
+    file.open("/home/sebastian/Desktop/distances.txt");
+    if (!file.is_open()) {
+        cout<<"Fehler beim oeffnen von distances.txt!"<<endl;
+    }
+
+    for (int i = 0; i < distances.rows(); i++) {
+        file << distances(i) << endl;
+    }
+
+    file.close();
+}
+
+int pointsLowerThanThreshold(MatrixXf source, MatrixXf target, float threshold) {
+    MatrixXf cp(source.rows(), source.cols());
+    VectorXf distances(source.cols());
+    int number = 0;
+
+    find_correspondences(source, target, cp, distances);
+
+    for (int i = 0; i < source.cols(); i++) {
+        if (distances(i) < threshold) {
+            number++;
+        }
+    }
+
+    printDistances(distances);
+
+    return number;
+}
+
+
+
 float find_pointcloud_alignment(int number_subclouds, MatrixXf *template_subclouds, MatrixXf world_cloud, float eps, MatrixXf R_init, VectorXf t_init, float s_init, MatrixXf &R_icp,
                                 VectorXf &t_icp, float &s_icp, int &itCt, int maxIcpIt, float icpEps, int maxDepth, float inlier_portion, float maxTime) {
 
     struct timeval start;
     gettimeofday(&start, NULL);
+
+    float THRESHOLD = 0.013;
+    int max_points = 0;
 
     int queueLength;
     Cube **Q = createPriorityQueue(maxDepth, queueLength);
@@ -426,7 +464,6 @@ float find_pointcloud_alignment(int number_subclouds, MatrixXf *template_subclou
     R_star << 0.0155734, -0.999806, 0.0120183, 0.999878, 0.0155607, -0.00114424, 0.00095701, 0.0120346, 0.999927;
 
 
-
     for (int i = 0; i < queueLength; i++) {
         cout<<"percentage: "<< ((float) i) / ((float) queueLength)*100.<<"%, iteration "<<i+1<<"/"<<queueLength << endl;
 
@@ -434,25 +471,41 @@ float find_pointcloud_alignment(int number_subclouds, MatrixXf *template_subclou
             break;
         }
 
-        MatrixXf R_i = getAARot(Q[i]->r0) * R_init;
+        MatrixXf R_i = getAARot(Q[i]->r0);
         VectorXf t_i = t_init;
         float s_i = s_init;
 
         float err = trimmed_scaling_icp(number_subclouds, template_subclouds, world_cloud, R_i, t_i, s_i, 1e-4, icpItCt, 300, 0.4);
 
+        MatrixXf template_proj(3, template_subclouds[0].cols());
+        apply_transformation(template_subclouds[0], template_proj, R_i, t_i, s_i);
+        int n_points_thres = pointsLowerThanThreshold(template_proj, world_cloud, THRESHOLD);
 
+        float param_err = (R_star-R_i).norm() + (t_star-t_i).norm() + abs(1.-s_i);
+
+        cout<<"err: "<<err<<", param_err: "<<param_err<<", n_points: "<<n_points_thres<<endl;
+
+        //if (param_err < minErr) {
         if (err < minErr && s_i > 0.8) {
+        //if (n_points_thres >= max_points) {
             minErr = err;
+            max_points = n_points_thres;
 
-            R_icp = R_i * R_init.transpose();
+            R_icp = R_i;
             t_icp = t_i;
             s_icp = s_i;
         }
+
+
+
+        //MatrixXf target_star(3, template_subclouds[0].cols());
+        //apply_transformation(template_subclouds[0], target_star, R_star, t_star, 1.);
+        //pointsLowerThanThreshold(target_star, world_cloud, 0.1);
+
+
     }
 
-    R_icp = R_star;
-    t_icp = t_star;
-    s_icp = 1.;
+
 
     return minErr;
 }
@@ -504,7 +557,7 @@ float trimmed_scaling_icp(int number_subclouds, MatrixXf *template_subclouds, Ma
         }
     }
 
-    cout<<"iterations needed: "<<itCt<<endl;
+    cout<<"iterations needed: "<<itCt<<" error: "<<calc_error(template_proj, world_cloud, inlier_portion)<<endl;
     return calc_error(template_proj, world_cloud, inlier_portion);
 }
 
