@@ -238,8 +238,15 @@ public:
         VectorXf t_icp = currentPosition;
         float s_icp = 1.;
 
-        int itCt = 0;
+       //Test examples
+       //goal->source_pointcloud
+       //goal->target_pointcloud
+       //        sensor_msgs::PointCloud2 pointcloud_2;
+       //        boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > cloud (new pcl::PointCloud<pcl::PointXYZ>());
+       //        pcl::io::loadPCDFile("path/to/pcd",*cloud);
+       //        pcl::toROSMsg(*cloud,pointcloud_2);
 
+        int itCt = 0;
         float error = find_pointcloud_alignment(number_subclouds, template_subclouds, currentTargetPointcloud, 1, currentRotation, currentPosition, 1., R_icp, t_icp, s_icp,
                                                      itCt, 300, 1e-7, 1, 0.4, 10);
 
