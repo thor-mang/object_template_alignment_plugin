@@ -149,6 +149,7 @@ public:
 
 
     void executeCB(const object_template_alignment_plugin::PointcloudAlignmentGoalConstPtr &goal) {
+        int TARGET_RADIUS_FACTOR = 1.3;
 
         // convert messages to pointclouds
         boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pointcloud_source (new pcl::PointCloud<pcl::PointXYZ>());
@@ -156,25 +157,73 @@ public:
 
         MatrixXf source_pointcloud = MatrixXf(3,pointcloud_source->size());
 
+        float max_radius = FLT_MIN;
+
         for (int i = 0; i < pointcloud_source->size(); i++) {
             source_pointcloud(0,i) = pointcloud_source->at(i).x;
             source_pointcloud(1,i) = pointcloud_source->at(i).y;
             source_pointcloud(2,i) = pointcloud_source->at(i).z;
+
+            float radius = sqrt(pointcloud_source->at(i).x*pointcloud_source->at(i).x +
+                                pointcloud_source->at(i).y*pointcloud_source->at(i).y +
+                                pointcloud_source->at(i).z*pointcloud_source->at(i).z);
+            if (radius > max_radius) {
+                max_radius = radius;
+            }
         }
 
 
         boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pointcloud_target (new pcl::PointCloud<pcl::PointXYZ>());
         pcl::fromROSMsg(goal->target_pointcloud, *pointcloud_target);
 
-        MatrixXf target_pointcloud = MatrixXf(3,pointcloud_target->size());
 
+        int target_size = 0;
         for (int i = 0; i < pointcloud_target->size(); i++) {
-            target_pointcloud(0,i) = pointcloud_target->at(i).x;
-            target_pointcloud(1,i) = pointcloud_target->at(i).y;
-            target_pointcloud(2,i) = pointcloud_target->at(i).z;
+            float dist = sqrt(pow(pointcloud_target->at(i).x - goal->initial_pose.pose.position.x,2) +
+                              pow(pointcloud_target->at(i).y - goal->initial_pose.pose.position.y,2) +
+                              pow(pointcloud_target->at(i).z - goal->initial_pose.pose.position.z,2));
+
+            if (dist < TARGET_RADIUS_FACTOR*max_radius) {
+                target_size++;
+            }
+
         }
 
-        targetKdTree.setInputCloud (pointcloud_target); // TODO: als Argument uebergeben
+        cout<<"target size: "<<target_size<<endl;
+
+
+        MatrixXf target_pointcloud = MatrixXf(3,target_size);
+
+        pcl::PointCloud<pcl::PointXYZ>::Ptr target_pcl_pointcloud (new pcl::PointCloud<pcl::PointXYZ>);;
+
+        // Fill in the cloud data
+        target_pcl_pointcloud->width    = target_size;
+        target_pcl_pointcloud->height   = 1;
+        target_pcl_pointcloud->is_dense = false;
+        target_pcl_pointcloud->points.resize(target_pcl_pointcloud->width * target_pcl_pointcloud->height);
+
+        int pos = 0;
+        for (int i = 0; i < target_size; i++) {
+            float dist = sqrt(pow(pointcloud_target->at(i).x - goal->initial_pose.pose.position.x,2) +
+                              pow(pointcloud_target->at(i).y - goal->initial_pose.pose.position.y,2) +
+                              pow(pointcloud_target->at(i).z - goal->initial_pose.pose.position.z,2));
+
+            if (dist < TARGET_RADIUS_FACTOR*max_radius) {
+                target_pointcloud(0,pos) = pointcloud_target->at(i).x;
+                target_pointcloud(1,pos) = pointcloud_target->at(i).y;
+                target_pointcloud(2,pos) = pointcloud_target->at(i).z;
+
+                target_pcl_pointcloud->points[pos].x = pointcloud_target->at(i).x;
+                target_pcl_pointcloud->points[pos].y = pointcloud_target->at(i).y;
+                target_pcl_pointcloud->points[pos].z = pointcloud_target->at(i).z;
+
+                pos++;
+            }
+        }
+
+        targetKdTree.setInputCloud (target_pcl_pointcloud); // TODO: als Argument uebergeben
+
+        cout<<"size target"<<target_size<<endl;
 
 
         // convert initial_pose structure to transformation parameters
