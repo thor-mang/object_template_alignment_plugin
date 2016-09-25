@@ -105,7 +105,7 @@ void keyboardCallback(const keyboard::Key::ConstPtr& key) {
     initial_pose.pose.position = currentPose.position;
     goal.initial_pose = initial_pose;
 
-    goal.command = 0;
+    goal.command = command;
 
     // call server
     ac.sendGoal(goal);
@@ -114,8 +114,6 @@ void keyboardCallback(const keyboard::Key::ConstPtr& key) {
 
     if (finished_before_timeout) {        
         object_template_alignment_plugin::PointcloudAlignmentResultConstPtr result = ac.getResult();
-
-        cout<<"position client: "<<result->transformation_pose.pose.position.x<<" "<<result->transformation_pose.pose.position.y<<" "<<result->transformation_pose.pose.position.z<<endl;
 
         // send current Pose to align_template_srv
         ros::ServiceClient align_template_client;
@@ -155,10 +153,8 @@ void templateListCallback(const vigir_object_template_msgs::TemplateServerList::
     // read out current pose of the template
     if (pos != -1) {
         currentTemplateName = templateList->template_list.at(pos);
-        //cout<<"1: "<<templateList->pose.at(pos).pose.position.x<<" "<<templateList->pose.at(pos).pose.position.y<<" "<<templateList->pose.at(pos).pose.position.z<<endl;
 
         currentPose = templateList->pose.at(pos).pose;
-        //cout<<"t: "<<currentPose.position.x<<" "<<currentPose.position.y<<" "<<currentPose.position.z<<endl;
     }
 }
 
@@ -178,11 +174,6 @@ void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pointcloud) {
     pcl::fromROSMsg(*pointcloud, *pc_);
 
     world_pointcloud = pc_;
-
-    cout<<"pointcloud callback pc_: "<<endl;
-    cout<<pc_->at(0).x<<" "<<pc_->at(0).y<<" "<<pc_->at(0).z<<endl;
-    cout<<pc_->at(1).x<<" "<<pc_->at(1).y<<" "<<pc_->at(1).z<<endl;
-    cout<<pc_->at(2).x<<" "<<pc_->at(2).y<<" "<<pc_->at(2).z<<endl<<endl;
 
     pointcloudReceived = true;
 }
