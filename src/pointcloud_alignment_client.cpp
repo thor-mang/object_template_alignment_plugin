@@ -46,6 +46,7 @@ protected:
 
 void keyboardCallback(const keyboard::Key::ConstPtr& key) {
     // only reacts to l (local icp) and g (global icp)
+    cout<<"keyboard callback: key "<<key<<" has been pressed"<<endl;
     if (key->code != 108 && key->code != 103) {
         return;
     }
