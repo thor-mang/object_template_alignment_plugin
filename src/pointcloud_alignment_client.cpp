@@ -32,6 +32,8 @@ static geometry_msgs::Pose currentPose;
 static boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > world_pointcloud;
 static bool pointcloudReceived = false, templateReceived = false;
 
+static int mode = 1;
+
 
 class PointcloudAlignmentClient
 {
@@ -44,33 +46,13 @@ protected:
     
 };
 
-void keyboardCallback(const keyboard::Key::ConstPtr& key) {
-    // only reacts to l (local icp) and g (global icp)
-    cout<<"keyboard callback: key "<<key<<" has been pressed"<<endl;
-    if (key->code != 108 && key->code != 103) {
-        return;
-    }
-
+void sendRequestToServer() {
     // check if world cloud and template are already available
-    if (pointcloudReceived == false || templateReceived == false) {
-        if (pointcloudReceived == false) {
-            ROS_ERROR("No pointcloud received - Please send a pointcloud request first.");
-        }
-        if (templateReceived == false) {
-            ROS_ERROR("No template received - Please choose template and double click on it.");
-        }
+    if (pointcloudReceived == false) {
+
+        ROS_ERROR("No pointcloud received - Please send a pointcloud request first.");
 
         return;
-    }
-
-    // set command according to input
-    int command;
-    if (key->code == 108) { // code == l
-        command = 0;
-        ROS_INFO("Sending local ICP request to server.");
-    } else if (key->code == 103) { // code == g;
-        command = 1;
-        ROS_INFO("Sending global ICP request to server.");
     }
 
     // create request for action server and wait for server to start
@@ -106,14 +88,14 @@ void keyboardCallback(const keyboard::Key::ConstPtr& key) {
     initial_pose.pose.position = currentPose.position;
     goal.initial_pose = initial_pose;
 
-    goal.command = command;
+    goal.command = mode;
 
     // call server
     ac.sendGoal(goal);
 
     bool finished_before_timeout = ac.waitForResult(ros::Duration(30.0));
 
-    if (finished_before_timeout) {        
+    if (finished_before_timeout) {
         object_template_alignment_plugin::PointcloudAlignmentResultConstPtr result = ac.getResult();
 
         // send current Pose to align_template_srv
@@ -140,6 +122,20 @@ void keyboardCallback(const keyboard::Key::ConstPtr& key) {
     }
 }
 
+void keyboardCallback(const keyboard::Key::ConstPtr& key) {
+    // set command according to input
+    int command;
+    if (key->code == 108) { // code == l
+        mode = 0;
+        ROS_INFO("Mode set to local pointcloud alignment.");
+    } else if (key->code == 103) { // code == g;
+        mode = 1;
+        ROS_INFO("Mode set to global pointcloud alignment.");
+    }
+
+
+}
+
 void templateListCallback(const vigir_object_template_msgs::TemplateServerList::ConstPtr& templateList) {
     // get position of the current template in the template list
     int pos = -1;
@@ -156,6 +152,11 @@ void templateListCallback(const vigir_object_template_msgs::TemplateServerList::
         currentTemplateName = templateList->template_list.at(pos);
 
         currentPose = templateList->pose.at(pos).pose;
+    }
+
+    if (templateReceived == true) {
+        templateReceived = false;
+        sendRequestToServer();
     }
 }
 

@@ -382,14 +382,13 @@ public:
             itCt++;
         }
 
-        R_init = R;
         t_init = t;
         s_init = s;
 
         MatrixXf R_sym[3];
-        R_sym[0] = getRotationMatrix(M_PI,0,0);
-        R_sym[1] = getRotationMatrix(0,M_PI,0);
-        R_sym[2] = getRotationMatrix(0,0,M_PI);
+        R_sym[0] = getRotationMatrix(M_PI,0,0)*R;
+        R_sym[1] = getRotationMatrix(0,M_PI,0)*R;
+        R_sym[2] = getRotationMatrix(0,0,M_PI)*R;
 
         #pragma omp parallel for shared(minErr, R, t, s)
         for (int i = 0; i < 3; i++) {
