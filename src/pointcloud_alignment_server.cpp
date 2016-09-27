@@ -332,6 +332,7 @@ public:
         } else  if (command == 1) { // execute global pointcloud alignment
             cout<<"executing global icp"<<endl;
             return global_pointcloud_alignment(number_subclouds, source_subclouds, target_pointcloud, R_icp, t_icp, s_icp);
+
         } else { // invalid command
             ROS_ERROR("Received invalid command: %d", command);
             as_.setAborted();
@@ -339,7 +340,7 @@ public:
     }
 
     float global_pointcloud_alignment(int number_subclouds, MatrixXf *source_subclouds, MatrixXf target_pointcloud, MatrixXf &R, VectorXf &t, float &s) {
-        float maxTime = 3;
+        float maxTime = 1.5;
         int maxDepth = 2;
 
 
@@ -381,7 +382,35 @@ public:
             itCt++;
         }
 
-        cout<<"Executed "<<itCt<<" icp iterations."<<endl;
+        R_init = R;
+        t_init = t;
+        s_init = s;
+
+        MatrixXf R_sym[3];
+        R_sym[0] = getRotationMatrix(M_PI,0,0);
+        R_sym[1] = getRotationMatrix(0,M_PI,0);
+        R_sym[2] = getRotationMatrix(0,0,M_PI);
+
+        #pragma omp parallel for shared(minErr, R, t, s)
+        for (int i = 0; i < 3; i++) {
+            MatrixXf R_i = R_sym[0];
+            VectorXf t_i = t_init;
+            float s_i = s_init;
+
+            float err = local_pointcloud_alignment(number_subclouds, source_subclouds, target_pointcloud, R_i, t_i, s_i);
+
+            if (err < minErr && s_i > 0.8) {
+                minErr = err;
+
+                R = R_i;
+                t = t_i;
+                s = s_i;
+            }
+
+            itCt++;
+        }
+
+        cout<<"Executed "<<itCt<<" + icp iterations."<<endl;
         return minErr;
     }
 
@@ -482,10 +511,6 @@ public:
 
         return number;
     }
-
-
-
-
 
     void trim_pointcloud(MatrixXf pointcloud, MatrixXf correspondences, VectorXf distances, MatrixXf &pointcloud_trimmed, MatrixXf &correspondences_trimmed) {
         int number_inliers = get_inlier_number(INLIER_PORTION, pointcloud.cols());
@@ -987,6 +1012,15 @@ float calc_error(MatrixXf source_pointcloud, MatrixXf target_pointcloud, MatrixX
         return (int) floor(inlier_portion*((float) number_points));
     }
 
+    MatrixXf getRotationMatrix(float xRot, float yRot, float zRot) {
+        MatrixXf R(3,3);
+
+        R << cos(zRot)*cos(yRot), -sin(zRot)*cos(xRot)+cos(zRot)*sin(yRot)*sin(xRot), sin(zRot)*sin(xRot)+cos(zRot)*sin(yRot)*cos(xRot),
+             sin(zRot)*cos(yRot),  cos(zRot)*cos(xRot)+sin(zRot)*sin(yRot)*sin(xRot),-cos(zRot)*sin(xRot)+sin(zRot)*sin(yRot)*cos(xRot),
+             -sin(yRot),           cos(yRot)*sin(xRot),                               cos(yRot)*cos(xRot);
+
+        return R;
+    }
 };
 
 
