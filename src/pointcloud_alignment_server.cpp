@@ -68,8 +68,8 @@ float find_pointcloud_alignment(int command, MatrixXf template_pointcloud, Matri
 float local_pointcloud_alignment(int number_subclouds, MatrixXf *source_subclouds, MatrixXf target_pointcloud, MatrixXf &R, VectorXf &t, float &s);
 float global_pointcloud_alignment(int number_subclouds, MatrixXf *source_subclouds, MatrixXf target_pointcloud, MatrixXf &R, VectorXf &t, float &s);
 
-int get_inlier_number(float inlier_portion, int number_points);
-void trim_pointcloud(MatrixXf pointcloud, MatrixXf correspondences, VectorXf distances, MatrixXf &pointcloud_trimmed, MatrixXf &correspondences_trimmed);
+//int get_inlier_number(float inlier_portion, int number_points);
+bool trim_pointcloud(MatrixXf pointcloud, MatrixXf correspondences, VectorXf distances, MatrixXf &pointcloud_trimmed, MatrixXf &correspondences_trimmed);
 void find_correspondences(MatrixXf source_pointcloud, MatrixXf target_pointcloud, MatrixXf &correspondences, VectorXf &distances);
 void find_transformation(MatrixXf source_pointcloud, MatrixXf target_pointcloud, MatrixXf &R, VectorXf &t, float &s);
 void apply_transformation(MatrixXf pointcloud, MatrixXf &pointcloud_proj, MatrixXf R, VectorXf t, float s);
@@ -104,8 +104,9 @@ void addNoiseToParams(MatrixXf &R, VectorXf &t, float &s, float range);
 
 static pcl::KdTreeFLANN<pcl::PointXYZ>targetKdTree;
 
-static const float INLIER_PORTION = 0.5;
+//static const float INLIER_PORTION = 0.5;
 static const float DISTANCE_THRESHOLD = 0.02;
+static float MIN_OVERLAPPING_PERCENTAGE = 0.15;
 
 
 class PointcloudAlignmentAction
@@ -227,37 +228,6 @@ public:
 
         targetKdTree.setInputCloud (target_pcl_pointcloud); // TODO: als Argument uebergeben
 
-
-
-        VectorXd s_tmp(3), t_tmp(3);
-        s_tmp << 0,0,0;
-        t_tmp << 0,0,0;
-        for (int i = 0; i < source_pointcloud.cols(); i++) {
-            if (i % 2 == 0) {
-                s_tmp(0) += source_pointcloud(0,i);
-                s_tmp(1) += source_pointcloud(1,i);
-                s_tmp(2) += source_pointcloud(2,i);
-            } else {
-                s_tmp(0) -= source_pointcloud(0,i);
-                s_tmp(1) -= source_pointcloud(1,i);
-                s_tmp(2) -= source_pointcloud(2,i);
-            }
-        }
-
-        for (int i = 0; i < target_pointcloud.cols(); i++) {
-            if (i % 2 == 0) {
-                t_tmp(0) += target_pointcloud(0,i);
-                t_tmp(1) += target_pointcloud(1,i);
-                t_tmp(2) += target_pointcloud(2,i);
-            } else {
-                t_tmp(0) -= target_pointcloud(0,i);
-                t_tmp(1) -= target_pointcloud(1,i);
-                t_tmp(2) -= target_pointcloud(2,i);
-            }
-        }
-
-        cout<<"s: "<<s_tmp<<endl<<"t_tmp: "<<t_tmp<<endl;
-
         // convert initial_pose structure to transformation parameters
         MatrixXf R_icp = MatrixXf(3,3);
         float qx = goal->initial_pose.pose.orientation.x;
@@ -374,11 +344,10 @@ public:
             float err = local_pointcloud_alignment(number_subclouds, source_subclouds, target_pointcloud, R_i, t_i, s_i);
 
             int n_points = pointsLowerThanThreshold(source_subclouds[0], target_pointcloud, R_i, t_i, s_i);
-            cout<<"err: "<<err<<", n points: "<<n_points<<endl;
+            //cout<<"err: "<<err<<", n : "<<n_points<<endl;
 
             if (n_points >= max_points) {
             //if (err < minErr && s_i > 0.8) {
-                cout<<"hit!"<<endl;
                 minErr = err;
                 max_points = n_points;
 
@@ -394,13 +363,13 @@ public:
         s_init = s;
 
         MatrixXf R_sym[3];
-        R_sym[0] = getRotationMatrix(M_PI,0,0)*R;
-        R_sym[1] = getRotationMatrix(0,M_PI,0)*R;
-        R_sym[2] = getRotationMatrix(0,0,M_PI)*R;
+        R_sym[0] = R*getRotationMatrix(M_PI,0,0);
+        R_sym[1] = R*getRotationMatrix(0,M_PI,0);
+        R_sym[2] = R*getRotationMatrix(0,0,M_PI);
 
         #pragma omp parallel for shared(minErr, R, t, s)
         for (int i = 0; i < 3; i++) {
-            MatrixXf R_i = R_sym[0];
+            MatrixXf R_i = R_sym[i];
             VectorXf t_i = t_init;
             float s_i = s_init;
 
@@ -421,9 +390,11 @@ public:
             itCt++;
         }
 
-        printDistances(source_subclouds[0], target_pointcloud, R, t, s);
+        //cout<<"maxPoints"<<endl;
 
-        cout<<"Executed "<<itCt<<" + icp iterations."<<endl;
+        //printDistances(source_subclouds[0], target_pointcloud, R, t, s);
+
+        cout<<"Executed "<<itCt<<" icp iterations."<<endl;
         return minErr;
     }
 
@@ -435,7 +406,7 @@ public:
         float err_eps = 0.1;
 
         int source_size = source_subclouds[0].cols();
-        int number_inliers = get_inlier_number(INLIER_PORTION, source_size);
+        //int number_inliers = get_inlier_number(INLIER_PORTION, source_size);
 
         float err_old;
         int itCt = 0;
@@ -443,8 +414,9 @@ public:
         MatrixXf correspondences(3, source_size);
         VectorXf distances(source_size);
         MatrixXf source_proj(3, source_size);
-        MatrixXf source_trimmed(3, number_inliers);
-        MatrixXf correspondences_trimmed(3, number_inliers);
+        //MatrixXf source_trimmed(3, number_inliers);
+        //MatrixXf correspondences_trimmed(3, number_inliers);
+        MatrixXf source_trimmed, correspondences_trimmed;
         MatrixXf R_old(3,3);
         VectorXf t_old(3);
         float s_old;
@@ -455,6 +427,8 @@ public:
 
 
         while(itCt < maxIt) {
+            //cout<<"it: "<<itCt<<endl;
+
             source_cloud = source_subclouds[source_pos % number_subclouds];
             itCt++;
 
@@ -466,7 +440,9 @@ public:
 
             find_correspondences(source_proj, target_pointcloud, correspondences, distances);
 
-            trim_pointcloud(source_cloud, correspondences, distances, source_trimmed, correspondences_trimmed);
+            if (trim_pointcloud(source_cloud, correspondences, distances, source_trimmed, correspondences_trimmed) == false) {
+                return DBL_MAX;
+            }
 
             find_transformation(source_trimmed, correspondences_trimmed, R, t, s);
 
@@ -531,8 +507,27 @@ public:
         return number;
     }
 
-    void trim_pointcloud(MatrixXf pointcloud, MatrixXf correspondences, VectorXf distances, MatrixXf &pointcloud_trimmed, MatrixXf &correspondences_trimmed) {
-        int number_inliers = get_inlier_number(INLIER_PORTION, pointcloud.cols());
+    bool trim_pointcloud(MatrixXf pointcloud, MatrixXf correspondences, VectorXf distances, MatrixXf &pointcloud_trimmed, MatrixXf &correspondences_trimmed) {
+
+        int min_valid_points = (int) (MIN_OVERLAPPING_PERCENTAGE*((float) pointcloud.cols()));
+        int number_inliers = 0;
+
+        for (int i = 0; i < distances.rows(); i++) {
+            if (distances(i) < DISTANCE_THRESHOLD) {
+                number_inliers++;
+            }
+        }
+
+        if (number_inliers < min_valid_points) {
+            number_inliers = min_valid_points;
+        }
+
+        if (number_inliers == 0) {
+            return false;
+        }
+
+        pointcloud_trimmed = MatrixXf(3,number_inliers);
+        correspondences_trimmed = MatrixXf(3, number_inliers);
 
         VectorXf distances_sorted = distances;
 
@@ -554,6 +549,8 @@ public:
                 pos++;
             }
         }
+
+        return true;
     }
 
     /*void find_correspondences(MatrixXf source_pointcloud, MatrixXf target_pointcloud, MatrixXf &correspondences, VectorXf &distances) {
@@ -656,13 +653,14 @@ public:
     }
 
 float calc_error(MatrixXf source_pointcloud, MatrixXf target_pointcloud, MatrixXf R, VectorXf t, float s) {
-        int number_inliers = get_inlier_number(INLIER_PORTION, source_pointcloud.cols());
+        //int number_inliers = get_inlier_number(INLIER_PORTION, source_pointcloud.cols());
 
         MatrixXf source_proj(3, source_pointcloud.cols());
         MatrixXf correspondences(3, source_pointcloud.cols());
         VectorXf distances(source_pointcloud.cols());
-        MatrixXf source_proj_trimmed(3, number_inliers);
-        MatrixXf correspondences_trimmed(3, number_inliers);
+        MatrixXf source_proj_trimmed, correspondences_trimmed;
+        //MatrixXf source_proj_trimmed(3, number_inliers);
+        //MatrixXf correspondences_trimmed(3, number_inliers);
 
         apply_transformation(source_pointcloud, source_proj, R, t, s);
         find_correspondences(source_proj, target_pointcloud, correspondences, distances);
@@ -964,7 +962,7 @@ float calc_error(MatrixXf source_pointcloud, MatrixXf target_pointcloud, MatrixX
     }*/
 
     MatrixXf random_filter(MatrixXf pointcloud, int number_points) {
-        cout<<"random filter: "<<pointcloud.cols()<<endl;
+        cout<<"random filter: "<<pointcloud.cols()<<", number points: "<<number_points<<endl;
         if (pointcloud.cols() <= number_points) {
             return pointcloud;
         }
@@ -1027,9 +1025,9 @@ float calc_error(MatrixXf source_pointcloud, MatrixXf target_pointcloud, MatrixX
         }
     }
 
-    int get_inlier_number(float inlier_portion, int number_points) {
+    /*int get_inlier_number(float inlier_portion, int number_points) {
         return (int) floor(inlier_portion*((float) number_points));
-    }
+    }*/
 
     MatrixXf getRotationMatrix(float xRot, float yRot, float zRot) {
         MatrixXf R(3,3);
