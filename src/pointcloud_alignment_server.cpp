@@ -105,6 +105,7 @@ void addNoiseToParams(MatrixXf &R, VectorXf &t, float &s, float range);
 static pcl::KdTreeFLANN<pcl::PointXYZ>targetKdTree;
 
 static const float INLIER_PORTION = 0.5;
+static const float DISTANCE_THRESHOLD = 0.02;
 
 
 class PointcloudAlignmentAction
@@ -356,6 +357,7 @@ public:
 
         int itCt = 0;
         float minErr = FLT_MAX;
+        int max_points = 0;
 
         #pragma omp parallel for shared(minErr, R, t, s)
         for (int i = 0; i < queueLength; i++) {
@@ -371,8 +373,14 @@ public:
 
             float err = local_pointcloud_alignment(number_subclouds, source_subclouds, target_pointcloud, R_i, t_i, s_i);
 
-            if (err < minErr && s_i > 0.8) {
+            int n_points = pointsLowerThanThreshold(source_subclouds[0], target_pointcloud, R_i, t_i, s_i);
+            cout<<"err: "<<err<<", n points: "<<n_points<<endl;
+
+            if (n_points >= max_points) {
+            //if (err < minErr && s_i > 0.8) {
+                cout<<"hit!"<<endl;
                 minErr = err;
+                max_points = n_points;
 
                 R = R_i;
                 t = t_i;
@@ -398,8 +406,12 @@ public:
 
             float err = local_pointcloud_alignment(number_subclouds, source_subclouds, target_pointcloud, R_i, t_i, s_i);
 
-            if (err < minErr && s_i > 0.8) {
+            int n_points = pointsLowerThanThreshold(source_subclouds[0], target_pointcloud, R_i, t_i, s_i);
+
+            if (n_points >= max_points) {
+            //if (err < minErr && s_i > 0.8) {
                 minErr = err;
+                max_points = n_points;
 
                 R = R_i;
                 t = t_i;
@@ -408,6 +420,8 @@ public:
 
             itCt++;
         }
+
+        printDistances(source_subclouds[0], target_pointcloud, R, t, s);
 
         cout<<"Executed "<<itCt<<" + icp iterations."<<endl;
         return minErr;
@@ -441,7 +455,6 @@ public:
 
 
         while(itCt < maxIt) {
-
             source_cloud = source_subclouds[source_pos % number_subclouds];
             itCt++;
 
@@ -478,7 +491,14 @@ public:
         return err;
     }
 
-    void printDistances(VectorXf distances) {
+    void printDistances(MatrixXf source_cloud, MatrixXf target_cloud, MatrixXf R, VectorXf t, float s) {
+        MatrixXf source_proj(source_cloud.rows(), source_cloud.cols());
+        apply_transformation(source_cloud, source_proj, R, t , s);
+        MatrixXf correspondences(source_cloud.rows(), source_cloud.cols());
+        VectorXf distances(source_cloud.cols());
+
+        find_correspondences(source_proj, target_cloud, correspondences, distances);
+
         ofstream file;
 
         file.open("/home/sebastian/Desktop/distances.txt");
@@ -493,20 +513,20 @@ public:
         file.close();
     }
 
-    int pointsLowerThanThreshold(MatrixXf source, MatrixXf target, float threshold) {
-        MatrixXf correspondences(source.rows(), source.cols());
-        VectorXf distances(source.cols());
+    int pointsLowerThanThreshold(MatrixXf source_cloud, MatrixXf target_cloud, MatrixXf R, VectorXf t, float s) {
+        MatrixXf source_proj(source_cloud.rows(), source_cloud.cols());
+        apply_transformation(source_cloud, source_proj, R, t, s);
+        MatrixXf correspondences(source_cloud.rows(), source_cloud.cols());
+        VectorXf distances(source_cloud.cols());
         int number = 0;
 
-        find_correspondences(source, target, correspondences, distances);
+        find_correspondences(source_proj, target_cloud, correspondences, distances);
 
-        for (int i = 0; i < source.cols(); i++) {
-            if (distances(i) < threshold) {
+        for (int i = 0; i < source_cloud.cols(); i++) {
+            if (distances(i) < DISTANCE_THRESHOLD) {
                 number++;
             }
         }
-
-        printDistances(distances);
 
         return number;
     }
