@@ -8,4 +8,5 @@ geometry_msgs/PoseStamped initial_pose
 geometry_msgs/PoseStamped transformation_pose
 ---
 #feedback
-float64 percentage
+float32 aligned_percentage
+float32 normalized_error
