@@ -18,7 +18,7 @@ find_package(catkin REQUIRED COMPONENTS
 )
 
 ## System dependencies are found with CMake's conventions
- find_package(Boost REQUIRED COMPONENTS system)
+find_package(Boost REQUIRED COMPONENTS system)
 
 
 ## Uncomment this if the package has a setup.py. This macro ensures
@@ -71,10 +71,10 @@ find_package(catkin REQUIRED COMPONENTS
 #   Action2.action
 # )
 
-add_action_files(
-  DIRECTORY action
-  FILES PointcloudAlignment.action
-)
+#add_action_files(
+#  DIRECTORY action
+#  FILES PointcloudAlignment.action
+#)
 
 ## Generate added messages and services with any dependencies listed here
 # generate_messages(
@@ -82,9 +82,9 @@ add_action_files(
 #   std_msgs
 # )
 
-generate_messages(
-  DEPENDENCIES actionlib_msgs std_msgs sensor_msgs geometry_msgs # Or other packages containing msgs
-)
+#generate_messages(
+#  DEPENDENCIES actionlib_msgs std_msgs sensor_msgs geometry_msgs 
+#)
 
 ################################################
 ## Declare ROS dynamic reconfigure parameters ##
@@ -153,27 +153,16 @@ include_directories(
 
 ## Declare a C++ executable
 # add_executable(learning_actionlib_kal_node src/learning_actionlib_kal_node.cpp)
-add_executable(pointcloud_alignment_server src/pointcloud_alignment_server.cpp)
+
 add_executable(pointcloud_alignment_client src/pointcloud_alignment_client.cpp)
 
-## Compiler flags
-set(CMAKE_CXX_FLAGS "-O3")    
 
-FIND_PACKAGE( OpenMP REQUIRED)
-if(OPENMP_FOUND)
-message("OPENMP FOUND")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
-endif()
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
-add_dependencies(pointcloud_alignment_server ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 add_dependencies(pointcloud_alignment_client ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Specify libraries to link a library or executable target against
-target_link_libraries(pointcloud_alignment_server ${catkin_LIBRARIES})
 target_link_libraries(pointcloud_alignment_client ${catkin_LIBRARIES})
 
 ## Add cmake target dependencies of the executable

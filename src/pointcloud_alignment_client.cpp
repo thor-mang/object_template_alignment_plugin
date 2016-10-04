@@ -4,7 +4,7 @@
 
 #include <actionlib/client/simple_action_client.h>
 #include <actionlib/client/terminal_state.h>
-#include <object_template_alignment_plugin/PointcloudAlignmentAction.h>
+#include <object_template_alignment_server/PointcloudAlignmentAction.h>
 #include <csignal>
 
 #include <eigen3/Eigen/Dense>
@@ -41,9 +41,6 @@ class PointcloudAlignmentClient
 protected:
     ros::NodeHandle nh_;
     ros::Subscriber sub1_, sub2_, sub3_;
-
-
-    
 };
 
 void sendRequestToServer() {
@@ -56,7 +53,7 @@ void sendRequestToServer() {
     }
 
     // create request for action server and wait for server to start
-    actionlib::SimpleActionClient<object_template_alignment_plugin::PointcloudAlignmentAction> ac("pointcloud_alignment", true);
+    actionlib::SimpleActionClient<object_template_alignment_server::PointcloudAlignmentAction> ac("pointcloud_alignment", true);
     ROS_INFO("Waiting for action server to start.");
     ac.waitForServer();
     ROS_INFO("Action server started, sending goal.");
@@ -78,7 +75,7 @@ void sendRequestToServer() {
     pcl::toROSMsg(*world_pointcloud, target_pointcloud);
 
     // create goal and set parameters
-    object_template_alignment_plugin::PointcloudAlignmentGoal goal;
+    object_template_alignment_server::PointcloudAlignmentGoal goal;
 
     goal.source_pointcloud = template_pointcloud;
     goal.target_pointcloud = target_pointcloud;
@@ -96,7 +93,7 @@ void sendRequestToServer() {
     bool finished_before_timeout = ac.waitForResult(ros::Duration(30.0));
 
     if (finished_before_timeout) {
-        object_template_alignment_plugin::PointcloudAlignmentResultConstPtr result = ac.getResult();
+        object_template_alignment_server::PointcloudAlignmentResultConstPtr result = ac.getResult();
 
         // send current Pose to align_template_srv
         ros::ServiceClient align_template_client;
