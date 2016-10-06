@@ -1,0 +1,3 @@
+<launch>
+  <node name="pointcloud_alignment_client" pkg="object_template_alignment_plugin" type="pointcloud_alignment_client" />
+</launch>
