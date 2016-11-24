@@ -23,29 +23,30 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types_conversion.h>
 
+#include <time.h>
+#include <sys/time.h>
+
 #include <fstream>
 
 using namespace std;
 using namespace Eigen;
 
-MatrixXf readInMatrix(string filename, int rows, int cols);
-VectorXf readInVector(string filename, int rows);
-void saveData(string path);
-MatrixXf readInMatrix(string filename);
-string readInString(string filename);
-void run_test(string test_name, string path, MatrixXf template_cloud, MatrixXf target_cloud, geometry_msgs::PoseStamped pose, float t_err, int n_tests);
+typedef struct timeval timeval;
 
+void saveData(string path);
+void run_test(string test_name, string path, MatrixXf template_cloud, MatrixXf target_cloud, geometry_msgs::PoseStamped pose, float t_err, int n_tests);
+bool readInArguments(string path, MatrixXf &source_cloud, MatrixXf &target_cloud, VectorXf &t, VectorXf &q);
+void sendServerRequest(MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, VectorXf R, float &aligned_percentage, float &normalized_error);
+void runTests(string test_name, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, VectorXf q);
+float convertTimeval(timeval t);
+VectorXf calcOffset(float dist);
+float getRandomNumber();
+void updateVals(float val, float &min, float &max);
 
 static int currentTemplateId;
-
 static bool pointcloudReceived = false, templateReceived = false;
-
 static geometry_msgs::PoseStamped currentPose;
 static MatrixXf currentWorld, currentTemplate;
-
-// for runTests
-
-
 
 class PointcloudAlignmentClient
 {
@@ -54,34 +55,144 @@ protected:
     ros::NodeHandle nh_;
 };
 
-void sendServerRequest(MatrixXf template_cloud, MatrixXf world_cloud, geometry_msgs::PoseStamped initialPose) {
-
+float convertTimeval(timeval t) {
+    return (float) ((1.0/1000)*((t.tv_sec * 1000000 + t.tv_usec)));
 }
 
-void readInPosition(string filename, geometry_msgs::PoseStamped &pose) {
-    ifstream file;
-    file.open(filename.c_str());
+void sendServerRequest(MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, VectorXf R, float &aligned_percentage, float &normalized_error, float &passed_time) {
+    timeval start, end;
 
-    file >> pose.pose.position.x;
-    file >> pose.pose.position.y;
-    file >> pose.pose.position.z;
+    // create initial pose
+    geometry_msgs::PoseStamped initialPose;
 
+    geometry_msgs::Quaternion orientation;
+    geometry_msgs::Point position;
+
+    position.x = t(0);
+    position.y = t(1);
+    position.z = t(2);
+
+    orientation.w = sqrt(1. + R(0,0) + R(1,1) + R(2,2)) / 2.;
+    orientation.x = (R(2,1) - R(1,2)) / (4.*orientation.w);
+    orientation.y = (R(0,2) - R(2,0)) / (4.*orientation.w);
+    orientation.z = (R(1,0) - R(0,1)) / (4.*orientation.w);
+
+    initialPose.pose.orientation = orientation;
+    initialPose.pose.position = position;
+
+    // convert source cloud to message
+    pcl::PointCloud<pcl::PointXYZ>::Ptr source_tmp (new pcl::PointCloud<pcl::PointXYZ>);
+    source_tmp->width = source_cloud.cols();
+    source_tmp->height = 1;
+    source_tmp->points.resize (source_tmp->width * source_tmp->height);
+
+    for (int i = 0; i < source_cloud.cols(); i++) {
+        source_tmp->points[i].x = source_cloud(0,i);
+        source_tmp->points[i].y = source_cloud(1,i);
+        source_tmp->points[i].z = source_cloud(2,i);
+    }
+
+    static sensor_msgs::PointCloud2 source_msg;
+    pcl::toROSMsg(*source_tmp, source_msg);
+
+    // convert target cloud to message
+    pcl::PointCloud<pcl::PointXYZ>::Ptr target_tmp (new pcl::PointCloud<pcl::PointXYZ>);
+    target_tmp->width = target_cloud.cols();
+    target_tmp->height = 1;
+    target_tmp->points.resize (target_tmp->width * target_tmp->height);
+
+    for (int i = 0; i < target_cloud.cols(); i++) {
+        target_tmp->points[i].x = target_cloud(0,i);
+        target_tmp->points[i].y = target_cloud(1,i);
+        target_tmp->points[i].z = target_cloud(2,i);
+    }
+
+    static sensor_msgs::PointCloud2 target_msg;
+    pcl::toROSMsg(*target_tmp, target_msg);
+
+    // send goal to server
+    actionlib::SimpleActionClient<object_template_alignment_server::PointcloudAlignmentAction> ac("pointcloud_alignment", true);
+    ROS_INFO("Waiting for action server to start.");
+    ac.waitForServer();
+    ROS_INFO("Action server started, sending goal.");
+
+    object_template_alignment_server::PointcloudAlignmentGoal goal;
+    goal.initial_pose = initialPose;
+    goal.source_pointcloud = source_msg;
+    goal.target_pointcloud = target_msg;
+    goal.command = 1;
+
+    gettimeofday(&start, NULL);
+    ac.sendGoal(goal);
+    gettimeofday(&end, NULL);
+
+    bool finished_before_timeout = ac.waitForResult(ros::Duration(30.0));
+
+    if (finished_before_timeout) {
+        object_template_alignment_server::PointcloudAlignmentResultConstPtr result = ac.getResult();
+
+        aligned_percentage = result->aligned_percentage;
+        normalized_error = result->normalized_error;
+        passed_time = convertTimeval(end)-convertTimeval(start);
+    }
+}
+
+void runTests(string filename, int n_tests, float offset, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, MatrixXf R) {
+    float aligned_percentage, normalized_error, passed_time;
+    float min_percentage = FLT_MAX, max_percentage = FLT_MIN, avg_percentage = 0;
+    float min_error = FLT_MAX, max_error = FLT_MIN, avg_error = 0;
+    float min_time = FLT_MAX, max_time = FLT_MIN, avg_time = 0;
+
+    for (int i = 0; i < n_tests; i++) {
+        // TODO: aufruf überarbeiten
+        sendServerRequest(source_cloud, target_cloud, t, R, aligned_percentage, normalized_error, passed_time);
+
+        avg_percentage += aligned_percentage;
+        updateVals(aligned_percentage, min_percentage, max_percentage);
+
+        avg_error += normalized_error;
+        updateVals(normalized_error, min_error, max_error);
+
+        avg_time += passed_time;
+        updateVals(passed_time, min_time, max_time);
+    }
+
+    avg_percentage /= ((float) n_tests);
+    avg_error /= ((float) n_tests);
+    avg_time /= ((float) n_tests);
+
+    std::ofstream file;
+    file.open(filename.c_str(), std::ios::app);
+    file << "\t avg_percentage: "<<avg_percentage<<", min_percentage: "<<min_percentage<<", max_percentage: "<<max_percentage<<endl;
+    file << "\t avg_error: "<<avg_error<<", min_error: "<<min_error<<", max_error: "<<max_error<<endl;
+    file << "\t avg_time: "<<avg_time<<", min_time: "<<min_time<<", max_time: "<<max_time<<endl;
     file.close();
 }
 
-void readInOrientation(string filename, geometry_msgs::PoseStamped &pose) {
-    ifstream file;
-    file.open(filename.c_str());
-
-    file >> pose.pose.orientation.x;
-    file >> pose.pose.orientation.y;
-    file >> pose.pose.orientation.z;
-    file >> pose.pose.orientation.w;
-
-    file.close();
+void updateVals(float val, float &min, float &max) {
+    if (val < min) {
+        min = val;
+    }
+    if (val > max) {
+        max = val;
+    }
 }
 
-void run_tests(string test_data_dir) {
+VectorXf calcOffset(float dist) {
+    float alpha = getRandomNumber() * M_PI;
+    float beta = getRandomNumber() * 2.*M_PI;
+
+    VectorXf offset(3);
+    offset(0) = dist*sin(alpha)*cos(beta);
+    offset(1) = dist*sin(alpha)*sin(beta);
+    offset(2) = dist*cos(alpha);
+}
+
+float getRandomNumber() {
+    return ((float) rand() / ((float ) RAND_MAX));
+}
+
+void traverse_directories(string test_data_dir) {
     DIR *dir, *sub_dir;
     struct dirent *entry, *sub_entry;
     if ((dir = opendir (test_data_dir.c_str())) != NULL) {
@@ -94,43 +205,29 @@ void run_tests(string test_data_dir) {
                 string sub_dir_name = test_data_dir + "/" + entry->d_name;
                 if ((sub_dir = opendir(sub_dir_name.c_str())) != NULL) {
 
-                    MatrixXf template_cloud, world_cloud;
-                    geometry_msgs::PoseStamped initialPose;
+                    VectorXf t, q;
+                    MatrixXf source_cloud, target_cloud;
 
-                    bool world_b = false, template_b = false, rotation_b = false, translation_b = false;
-
-                    while ((sub_entry = readdir (sub_dir)) != NULL) {
-                        if (strcmp(sub_entry->d_name, ".") == 0 || strcmp(sub_entry->d_name, "..") == 0) {
-                            continue;
-                        }
-
-                        if (strcmp(sub_entry->d_name,"orientation.txt") == 0) {
-                            string filename = sub_dir_name + "/orientation.txt";
-                            readInOrientation(filename, initialPose);
-                            rotation_b = true;
-                        } else if (strcmp(sub_entry->d_name,"position.txt") == 0) {
-                            string filename = sub_dir_name + "/position.txt";
-                            readInPosition(filename, initialPose);
-                            translation_b = true;
-                        } else if (strcmp(sub_entry->d_name,"world.txt") == 0) {
-                            string filename = sub_dir_name + "/world.txt";
-                            world_cloud = readInMatrix(filename);
-                            world_b = true;
-                        } else if (strcmp(sub_entry->d_name,"template.txt") == 0) {
-                            string filename = sub_dir_name + "/template.txt";
-                            template_cloud = readInMatrix(filename);
-                            template_b = true;
-                        }
-
-                        if (world_b == false || template_b == false || rotation_b == false || template_b == false) {
-                            ROS_ERROR("%s contains not all data!", sub_dir_name.c_str());
-                            return;
-                        }
-
-                        run_test(sub_dir_name, test_data_dir, template_cloud, world_cloud, initialPose, 0, 1);
+                    if (readInArguments(sub_dir_name, source_cloud, target_cloud, t, q) == false) {
+                        ROS_ERROR("%s contains not all data!", sub_dir_name.c_str());
+                        return;
                     }
-                } else {
-                    ROS_ERROR("Could not open dir %s", entry->d_name);
+
+                    MatrixXf R(3,3);
+                    R <<
+                             1.0f - 2.0f*q(1)*q(1) - 2.0f*q(2)*q(2), 2.0f*q(0)*q(1) - 2.0f*q(2)*q(3), 2.0f*q(0)*q(2) + 2.0f*q(1)*q(3),
+                             2.0f*q(0)*q(1) + 2.0f*q(2)*q(3), 1.0f - 2.0f*q(0)*q(0) - 2.0f*q(2)*q(2), 2.0f*q(1)*q(2) - 2.0f*q(0)*q(3),
+                             2.0f*q(0)*q(2) - 2.0f*q(1)*q(3), 2.0f*q(1)*q(2) + 2.0f*q(0)*q(3), 1.0f - 2.0f*q(0)*q(0) - 2.0f*q(1)*q(1);
+
+                    //runTests(sub_dir_name, source_cloud, target_cloud, t, R);
+                    string filename = sub_dir_name + ".txt";
+                    cout<<"name: "<<filename<<endl;
+                    std::ofstream file;
+                    file.open(filename.c_str());
+                    file << "running test 1 with 100 iterations"<<endl;
+                    file.close();
+
+                    runTests(filename, 0, 0, source_cloud, target_cloud, t, R);
                 }
             }
         }
@@ -140,9 +237,74 @@ void run_tests(string test_data_dir) {
     }
 }
 
+bool readInArguments(string path, MatrixXf &source_cloud, MatrixXf &target_cloud, VectorXf &t, VectorXf &q) {
+    ifstream file;
+    int cols;
+
+    // read in position
+    t = VectorXf(3);
+    string filename = path + "/position.txt";
+    file.open(filename.c_str());
+    if (!file.is_open()) {
+        ROS_ERROR("Failed to open %s", filename.c_str());
+        return false;
+    }
+    for (int i = 0; i < 3; i++) {
+        file >> t(i);
+    }
+    file.close();
+
+    // read in orientation
+    q = VectorXf(4);
+    filename = path + "/orientation.txt";
+    file.open(filename.c_str());
+    if (!file.is_open()) {
+        ROS_ERROR("Failed to open %s", filename.c_str());
+        return false;
+    }
+    for (int i = 0; i < 4; i++) {
+        file >> q(i);
+    }
+    file.close();
+
+    // read in source cloud
+    filename = path + "/source.txt";
+    file.open(filename.c_str());
+    if (!file.is_open()) {
+        ROS_ERROR("Failed to open %s", filename.c_str());
+        return false;
+    }
+    file >> cols;
+    source_cloud = MatrixXf(3,cols);
+    for (int i = 0; i < cols; i++) {
+        file >> source_cloud(0,i);
+        file >> source_cloud(1,i);
+        file >> source_cloud(2,i);
+    }
+    file.close();
+
+    // read in target cloud
+    filename = path + "/target.txt";
+    file.open(filename.c_str());
+    if (!file.is_open()) {
+        ROS_ERROR("Failed to open %s", filename.c_str());
+        return false;
+    }
+    file >> cols;
+    target_cloud = MatrixXf(3,cols);
+    for (int i = 0; i < cols; i++) {
+        file >> target_cloud(0,i);
+        file >> target_cloud(1,i);
+        file >> target_cloud(2,i);
+    }
+    file.close();
+
+    return true;
+}
+
 void saveData(string path) {
-    if (templateReceived == false || pointcloudReceived == false) {
-        ROS_ERROR("Pointcloud or template missing!");
+    if (pointcloudReceived == false) {
+        ROS_ERROR("Pointcloud missing!");
         return;
     }
 
@@ -162,85 +324,22 @@ void saveData(string path) {
     file.close();
 
     // save world cloud
-    filename = path + "/world.txt";
+    filename = path + "/target.txt";
     file.open(filename.c_str());
+    file << currentWorld.cols()<<endl;
     for (int i = 0; i < currentWorld.cols(); i++) {
         file<<currentWorld(0,i)<<" " << currentWorld(1,i)<<" "<<currentWorld(2,i)<<endl;
     }
     file.close();
 
     // save template
-    filename = path + "/template.txt";
+    filename = path + "/source.txt";
     file.open(filename.c_str());
+    file << currentTemplate.cols()<<endl;
     for (int i = 0; i < currentTemplate.cols(); i++) {
         file<<currentTemplate(0,i)<<" " << currentTemplate(1,i)<<" "<<currentTemplate(2,i)<<endl;
     }
     file.close();
-}
-
-void run_test(string test_name, string path, MatrixXf template_cloud, MatrixXf target_cloud, geometry_msgs::PoseStamped pose, float t_err, int n_tests) {
-    for (int i = 0; i < n_tests; i++) {
-
-    }
-}
-
-VectorXf readInVector(string filename, int rows) {
-    VectorXf vec(rows);
-
-    std::ifstream file;
-
-    file.open(filename.c_str());
-    if (!file.is_open()) {
-        std::cout<<"Error while reading the input file! "<< filename<<" does not exist or is corrupted!"<<std::endl;
-    }
-
-    for (int i = 0; i < rows; i++) {
-        file >> vec(i);
-    }
-
-    return vec;
-}
-
-MatrixXf readInMatrix(string filename, int rows, int cols) {
-    MatrixXf mat(rows, cols);
-
-    std::ifstream file;
-
-    file.open(filename.c_str());
-    if (!file.is_open()) {
-        std::cout<<"Error while reading the input file! "<< filename<<" does not exist or is corrupted!"<<std::endl;
-    }
-
-    for (int i = 0; i < rows; i++) {
-        for (int j = 0; j < cols; j++) {
-            file >> mat(i,j);
-        }
-    }
-
-    return mat;
-}
-
-MatrixXf readInMatrix(string filename) {
-    std::ifstream file;
-
-    file.open(filename.c_str());
-    if (!file.is_open()) {
-        std::cout<<"Error while reading the input file! "<< filename<<" does not exist or is corrupted!"<<std::endl;
-    }
-
-    int rows, cols;
-    file >> rows;
-    file >> cols;
-
-    MatrixXf mat(rows, cols);
-
-    for (int i = 0; i < rows; i++) {
-        for (int j = 0; j < cols; j++) {
-            file >> mat(i,j);
-        }
-    }
-
-    return mat;
 }
 
 void keyboardCallback(const keyboard::Key::ConstPtr& key) {
@@ -248,10 +347,7 @@ void keyboardCallback(const keyboard::Key::ConstPtr& key) {
     int command;
     if (key->code == 116) { // code == t
         string path = ros::package::getPath("object_template_alignment_plugin") + "/test_data/";
-        cout<<"path: "<<path<<endl;
-        run_tests(path);
-    } else if (key->code == 115) { // code == s;
-        saveData("/home/sebastian/Desktop/");
+        traverse_directories(path);
     } else {
         ROS_INFO("key %d pressed", key->code);
     }
@@ -266,7 +362,8 @@ MatrixXf readInTemplate(string template_name) {
     string path = ros::package::getPath("vigir_template_library") + "/object_library/";
     sensor_msgs::PointCloud2 template_pointcloud;
     boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > cloud (new pcl::PointCloud<pcl::PointXYZ>());
-    pcl::io::loadPCDFile(path + filename,*cloud); // TODO: Fehler abfangen
+    string full_filename = path + filename;
+    pcl::io::loadPCDFile(full_filename,*cloud); // TODO: Fehler abfangen
     pcl::toROSMsg(*cloud, template_pointcloud);
 
     currentTemplate = MatrixXf(3, cloud->size());
@@ -275,32 +372,41 @@ MatrixXf readInTemplate(string template_name) {
         currentTemplate(1,i) = cloud->at(i).y;
         currentTemplate(2,i) = cloud->at(i).z;
     }
+
+    return currentTemplate;
 }
 
 void templateListCallback(const vigir_object_template_msgs::TemplateServerList::ConstPtr& templateList) {
-    // get position of the current template in the template list
-    int pos = -1;
-    for (int i = 0; i < templateList->template_id_list.size(); i++) {
+    if (templateReceived == true) {
+        templateReceived = false;
 
-        if (templateList->template_id_list.at(i) == currentTemplateId) {
-            pos = i;
-            break;
+        // get position of the current template in the template list
+        int pos = -1;
+        for (int i = 0; i < templateList->template_id_list.size(); i++) {
+
+            if (templateList->template_id_list.at(i) == currentTemplateId) {
+                pos = i;
+                break;
+            }
+        }
+
+        if (pos != -1) {
+            // read out current pose and name of the template
+            string tn = templateList->template_list.at(pos);
+            currentTemplate = readInTemplate(tn);
+            currentPose = templateList->pose.at(pos);
+
+            cout<<"saving data ..."<<endl;
+            saveData("/home/sebastian/thor/src/object_template_alignment_plugin/test_data/");
         }
     }
-
-    // read out current pose of the template
-    if (pos != -1) {
-        currentPose = templateList->pose.at(pos);
-
-        currentTemplate = readInTemplate(templateList->template_list.at(pos));
-    }
-
 }
 
 void templateSelectionCallback(const vigir_ocs_msgs::OCSObjectSelection::ConstPtr& newTemplate) {
     cout<<"I received a new template"<<endl;
 
     currentTemplateId = newTemplate->id;
+
 
     templateReceived = true;
 }

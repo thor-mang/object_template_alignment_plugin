@@ -129,31 +129,29 @@ void keyboardCallback(const keyboard::Key::ConstPtr& key) {
         mode = 1;
         ROS_INFO("Mode set to global pointcloud alignment.");
     }
-
-
 }
 
 void templateListCallback(const vigir_object_template_msgs::TemplateServerList::ConstPtr& templateList) {
-    // get position of the current template in the template list
-    int pos = -1;
-    for (int i = 0; i < templateList->template_id_list.size(); i++) {
-
-        if (templateList->template_id_list.at(i) == currentTemplateId) {
-            pos = i;
-            break;
-        }
-    }
-
-    // read out current pose of the template
-    if (pos != -1) {
-        currentTemplateName = templateList->template_list.at(pos);
-
-        currentPose = templateList->pose.at(pos).pose;
-    }
-
     if (templateReceived == true) {
         templateReceived = false;
-        sendRequestToServer();
+
+        // get position of the current template in the template list
+        int pos = -1;
+        for (int i = 0; i < templateList->template_id_list.size(); i++) {
+
+            if (templateList->template_id_list.at(i) == currentTemplateId) {
+                pos = i;
+                break;
+            }
+        }
+
+        if (pos != -1) {
+            // read out current pose and name of the template
+            currentTemplateName = templateList->template_list.at(pos);
+            currentPose = templateList->pose.at(pos).pose;
+
+            sendRequestToServer();
+        }
     }
 }
 
