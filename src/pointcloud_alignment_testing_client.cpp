@@ -42,6 +42,7 @@ float convertTimeval(timeval t);
 VectorXf calcOffset(float dist);
 float getRandomNumber();
 void updateVals(float val, float &min, float &max);
+MatrixXf randomRotation();
 
 static int currentTemplateId;
 static bool pointcloudReceived = false, templateReceived = false;
@@ -143,9 +144,21 @@ void runTests(string filename, int n_tests, float offset, MatrixXf source_cloud,
     float min_error = FLT_MAX, max_error = FLT_MIN, avg_error = 0;
     float min_time = FLT_MAX, max_time = FLT_MIN, avg_time = 0;
 
+    float MAX_ROTATION_ERROR = 0.1;
+    float MAX_TRANSLATION_ERROR = 0.2;
+
+    int success_ct = 0, success_rate;
+
     for (int i = 0; i < n_tests; i++) {
         // TODO: aufruf überarbeiten
-        sendServerRequest(source_cloud, target_cloud, t, R, aligned_percentage, normalized_error, passed_time);
+        VectorXf t_pa = t + calcOffset(offset);
+        MatrixXf R_pa = randomRotation();
+
+        sendServerRequest(source_cloud, target_cloud, t_pa, R_pa, aligned_percentage, normalized_error, passed_time);
+
+        if ((t-t_pa).norm() < MAX_TRANSLATION_ERROR && (R-R_pa).norm() < MAX_ROTATION_ERROR) {
+            success_ct++;
+        }
 
         avg_percentage += aligned_percentage;
         updateVals(aligned_percentage, min_percentage, max_percentage);
@@ -157,12 +170,14 @@ void runTests(string filename, int n_tests, float offset, MatrixXf source_cloud,
         updateVals(passed_time, min_time, max_time);
     }
 
+    success_rate = (((float) success_ct) / ((float) n_tests));
     avg_percentage /= ((float) n_tests);
     avg_error /= ((float) n_tests);
     avg_time /= ((float) n_tests);
 
     std::ofstream file;
     file.open(filename.c_str(), std::ios::app);
+    file << "\t "<<success_ct<<"/"<<n_tests<<" succeeded, success rate: "<<success_rate<<endl;
     file << "\t avg_percentage: "<<avg_percentage<<", min_percentage: "<<min_percentage<<", max_percentage: "<<max_percentage<<endl;
     file << "\t avg_error: "<<avg_error<<", min_error: "<<min_error<<", max_error: "<<max_error<<endl;
     file << "\t avg_time: "<<avg_time<<", min_time: "<<min_time<<", max_time: "<<max_time<<endl;
@@ -176,6 +191,34 @@ void updateVals(float val, float &min, float &max) {
     if (val > max) {
         max = val;
     }
+}
+
+MatrixXf randomRotation() {
+    float alpha = getRandomNumber() * M_PI;
+    float beta = getRandomNumber() * 2.*M_PI;
+    float dist = getRandomNumber()*M_PI;
+
+    VectorXf r(3);
+    r(0) = dist*sin(alpha)*cos(beta);
+    r(1) = dist*sin(alpha)*sin(beta);
+    r(2) = dist*cos(alpha);
+
+    MatrixXf R = MatrixXf::Identity(3,3);
+
+    if (r.norm() == 0) {
+        return R;
+    }
+
+    MatrixXf r_x(3,3);
+    r_x << 0, -r(2), r(1),
+        r(2), 0, -r(0),
+        -r(1), r(0), 0;
+
+
+    R += (r_x*sin(r.norm()))/(r.norm());
+    R += (r_x*r_x*(1-cos(r.norm())))/(r.norm()*r.norm());
+
+    return R;
 }
 
 VectorXf calcOffset(float dist) {
