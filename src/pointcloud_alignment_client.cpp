@@ -32,6 +32,8 @@ static geometry_msgs::Pose currentPose;
 static boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > world_pointcloud;
 static bool pointcloudReceived = false, templateReceived = false;
 
+
+
 static int mode = 1;
 
 

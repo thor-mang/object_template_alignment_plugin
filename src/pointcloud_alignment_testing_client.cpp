@@ -36,18 +36,21 @@ typedef struct timeval timeval;
 void saveData(string path);
 void run_test(string test_name, string path, MatrixXf template_cloud, MatrixXf target_cloud, geometry_msgs::PoseStamped pose, float t_err, int n_tests);
 bool readInArguments(string path, MatrixXf &source_cloud, MatrixXf &target_cloud, VectorXf &t, VectorXf &q);
-void sendServerRequest(MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, VectorXf R, float &aligned_percentage, float &normalized_error);
-void runTests(string test_name, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, VectorXf q);
+void sendServerRequest(MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, VectorXf R, float &aligned_percentage, float &normalized_error, float &passed_time);
+void runTests(string filename, int n_tests, float offset, bool dense, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, MatrixXf R);
 float convertTimeval(timeval t);
-VectorXf calcOffset(float dist);
+VectorXf calcOffset(float dist, bool dense);
 float getRandomNumber();
 void updateVals(float val, float &min, float &max);
 MatrixXf randomRotation();
+MatrixXf quaternionToMatrix(VectorXf q);
 
 static int currentTemplateId;
 static bool pointcloudReceived = false, templateReceived = false;
 static geometry_msgs::PoseStamped currentPose;
 static MatrixXf currentWorld, currentTemplate;
+
+static float percentage_save, error_save;
 
 class PointcloudAlignmentClient
 {
@@ -56,11 +59,20 @@ protected:
     ros::NodeHandle nh_;
 };
 
+void doneCb(const actionlib::SimpleClientGoalState& state, const object_template_alignment_server::PointcloudAlignmentResultConstPtr& result) {}
+
+void activeCb() {}
+
+void feedbackCb(const object_template_alignment_server::PointcloudAlignmentFeedbackConstPtr& feedback) {
+    percentage_save = feedback->aligned_percentage;
+    error_save = feedback->normalized_error;
+}
+
 float convertTimeval(timeval t) {
     return (float) ((1.0/1000)*((t.tv_sec * 1000000 + t.tv_usec)));
 }
 
-void sendServerRequest(MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, VectorXf R, float &aligned_percentage, float &normalized_error, float &passed_time) {
+void sendServerRequest(MatrixXf source_cloud, MatrixXf target_cloud, VectorXf &t, MatrixXf &R, float &aligned_percentage, float &normalized_error, float &passed_time) {
     timeval start, end;
 
     // create initial pose
@@ -124,7 +136,7 @@ void sendServerRequest(MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t,
     goal.command = 1;
 
     gettimeofday(&start, NULL);
-    ac.sendGoal(goal);
+    ac.sendGoal(goal, &doneCb, &activeCb, &feedbackCb);
     gettimeofday(&end, NULL);
 
     bool finished_before_timeout = ac.waitForResult(ros::Duration(30.0));
@@ -132,13 +144,19 @@ void sendServerRequest(MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t,
     if (finished_before_timeout) {
         object_template_alignment_server::PointcloudAlignmentResultConstPtr result = ac.getResult();
 
-        aligned_percentage = result->aligned_percentage;
-        normalized_error = result->normalized_error;
+        aligned_percentage = percentage_save;
+        normalized_error = error_save;
         passed_time = convertTimeval(end)-convertTimeval(start);
+
+        t<< result->transformation_pose.pose.position.x, result->transformation_pose.pose.position.y, result->transformation_pose.pose.position.z;
+        VectorXf q(4);
+        q << result->transformation_pose.pose.orientation.x,result->transformation_pose.pose.orientation.y,
+             result->transformation_pose.pose.orientation.z,result->transformation_pose.pose.orientation.w;
+        R = quaternionToMatrix(q);
     }
 }
 
-void runTests(string filename, int n_tests, float offset, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, MatrixXf R) {
+void runTests(string filename, int n_tests, float offset, bool dense, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, MatrixXf R) {
     float aligned_percentage, normalized_error, passed_time;
     float min_percentage = FLT_MAX, max_percentage = FLT_MIN, avg_percentage = 0;
     float min_error = FLT_MAX, max_error = FLT_MIN, avg_error = 0;
@@ -150,11 +168,13 @@ void runTests(string filename, int n_tests, float offset, MatrixXf source_cloud,
     int success_ct = 0, success_rate;
 
     for (int i = 0; i < n_tests; i++) {
-        // TODO: aufruf überarbeiten
-        VectorXf t_pa = t + calcOffset(offset);
+        VectorXf t_pa = t + calcOffset(offset, dense);
         MatrixXf R_pa = randomRotation();
 
         sendServerRequest(source_cloud, target_cloud, t_pa, R_pa, aligned_percentage, normalized_error, passed_time);
+
+        cout<<"t: "<<(t-t_pa).norm()<<" "<<((t-t_pa).norm() < MAX_TRANSLATION_ERROR)<<endl;
+        cout<<"R: "<<(R-R_pa).norm()<<" "<<((R-R_pa).norm() < MAX_ROTATION_ERROR)<<endl;
 
         if ((t-t_pa).norm() < MAX_TRANSLATION_ERROR && (R-R_pa).norm() < MAX_ROTATION_ERROR) {
             success_ct++;
@@ -170,6 +190,7 @@ void runTests(string filename, int n_tests, float offset, MatrixXf source_cloud,
         updateVals(passed_time, min_time, max_time);
     }
 
+
     success_rate = (((float) success_ct) / ((float) n_tests));
     avg_percentage /= ((float) n_tests);
     avg_error /= ((float) n_tests);
@@ -184,6 +205,69 @@ void runTests(string filename, int n_tests, float offset, MatrixXf source_cloud,
     file.close();
 }
 
+void traverse_directories(string test_data_dir) {
+    DIR *dir, *sub_dir;
+    struct dirent *entry;
+    if ((dir = opendir (test_data_dir.c_str())) != NULL) {
+        while ((entry = readdir (dir)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+                continue;
+            }
+
+            if (entry->d_type == DT_DIR) {
+                string sub_dir_name = test_data_dir + entry->d_name;
+                if ((sub_dir = opendir(sub_dir_name.c_str())) != NULL) {
+
+                    VectorXf t, q;
+                    MatrixXf source_cloud, target_cloud;
+
+                    if (readInArguments(sub_dir_name, source_cloud, target_cloud, t, q) == false) {
+                        ROS_ERROR("%s contains not all data!", sub_dir_name.c_str());
+                        return;
+                    }
+
+                    MatrixXf R = quaternionToMatrix(q);
+
+                    //runTests(sub_dir_name, source_cloud, target_cloud, t, R);
+                    string filename = sub_dir_name + ".txt";
+                    string test_name = entry->d_name;
+                    //cout<<"sub_dir_name: "<<sub_dir_name<<endl;
+                    //cout<<"name: "<<filename<<endl;
+                    //cout<<"test name: "<<test_name.substr(0,15)<<endl;
+
+                    std::ofstream file;
+
+                    if (test_name.substr(0,15).compare("drill_on_table_") == 0) {
+                        string filename = sub_dir_name + "_distances.txt";
+
+                        for (int i = 0; i <= 25; i++) {
+                            float dist = ((float) i) * 0.02;
+                            if (i == 0) {
+                                file.open(filename.c_str());
+                            } else {
+                                file.open(filename.c_str(), std::ios::app);
+                            }
+                            file << "running "<<25<<" tests with dist = "<<dist<<endl;
+                            file.close();
+
+                            runTests(filename, 1000, dist, false, source_cloud, target_cloud, t, R);
+                        } 
+                    }
+
+
+
+                    float dist = 0.5; // TODO: calculate
+
+                    runTests(filename, 1, dist, true, source_cloud, target_cloud, t, R);
+                }
+            }
+        }
+        closedir (dir);
+    } else {
+        ROS_ERROR("Could not open test_data_dir");
+    }
+}
+
 void updateVals(float val, float &min, float &max) {
     if (val < min) {
         min = val;
@@ -191,6 +275,16 @@ void updateVals(float val, float &min, float &max) {
     if (val > max) {
         max = val;
     }
+}
+
+MatrixXf quaternionToMatrix(VectorXf q) {
+    MatrixXf R(3,3);
+    R <<
+             1.0f - 2.0f*q(1)*q(1) - 2.0f*q(2)*q(2), 2.0f*q(0)*q(1) - 2.0f*q(2)*q(3), 2.0f*q(0)*q(2) + 2.0f*q(1)*q(3),
+             2.0f*q(0)*q(1) + 2.0f*q(2)*q(3), 1.0f - 2.0f*q(0)*q(0) - 2.0f*q(2)*q(2), 2.0f*q(1)*q(2) - 2.0f*q(0)*q(3),
+             2.0f*q(0)*q(2) - 2.0f*q(1)*q(3), 2.0f*q(1)*q(2) + 2.0f*q(0)*q(3), 1.0f - 2.0f*q(0)*q(0) - 2.0f*q(1)*q(1);
+
+    return R;
 }
 
 MatrixXf randomRotation() {
@@ -221,63 +315,25 @@ MatrixXf randomRotation() {
     return R;
 }
 
-VectorXf calcOffset(float dist) {
+VectorXf calcOffset(float dist, bool dense) {
     float alpha = getRandomNumber() * M_PI;
     float beta = getRandomNumber() * 2.*M_PI;
+
+    if (dense == true) {
+        dist = getRandomNumber() * dist;
+    }
 
     VectorXf offset(3);
     offset(0) = dist*sin(alpha)*cos(beta);
     offset(1) = dist*sin(alpha)*sin(beta);
     offset(2) = dist*cos(alpha);
+
+
+    return offset;
 }
 
 float getRandomNumber() {
     return ((float) rand() / ((float ) RAND_MAX));
-}
-
-void traverse_directories(string test_data_dir) {
-    DIR *dir, *sub_dir;
-    struct dirent *entry, *sub_entry;
-    if ((dir = opendir (test_data_dir.c_str())) != NULL) {
-        while ((entry = readdir (dir)) != NULL) {
-            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
-                continue;
-            }
-
-            if (entry->d_type == DT_DIR) {
-                string sub_dir_name = test_data_dir + "/" + entry->d_name;
-                if ((sub_dir = opendir(sub_dir_name.c_str())) != NULL) {
-
-                    VectorXf t, q;
-                    MatrixXf source_cloud, target_cloud;
-
-                    if (readInArguments(sub_dir_name, source_cloud, target_cloud, t, q) == false) {
-                        ROS_ERROR("%s contains not all data!", sub_dir_name.c_str());
-                        return;
-                    }
-
-                    MatrixXf R(3,3);
-                    R <<
-                             1.0f - 2.0f*q(1)*q(1) - 2.0f*q(2)*q(2), 2.0f*q(0)*q(1) - 2.0f*q(2)*q(3), 2.0f*q(0)*q(2) + 2.0f*q(1)*q(3),
-                             2.0f*q(0)*q(1) + 2.0f*q(2)*q(3), 1.0f - 2.0f*q(0)*q(0) - 2.0f*q(2)*q(2), 2.0f*q(1)*q(2) - 2.0f*q(0)*q(3),
-                             2.0f*q(0)*q(2) - 2.0f*q(1)*q(3), 2.0f*q(1)*q(2) + 2.0f*q(0)*q(3), 1.0f - 2.0f*q(0)*q(0) - 2.0f*q(1)*q(1);
-
-                    //runTests(sub_dir_name, source_cloud, target_cloud, t, R);
-                    string filename = sub_dir_name + ".txt";
-                    cout<<"name: "<<filename<<endl;
-                    std::ofstream file;
-                    file.open(filename.c_str());
-                    file << "running test 1 with 100 iterations"<<endl;
-                    file.close();
-
-                    runTests(filename, 0, 0, source_cloud, target_cloud, t, R);
-                }
-            }
-        }
-        closedir (dir);
-    } else {
-        ROS_ERROR("Could not open test_data_dir");
-    }
 }
 
 bool readInArguments(string path, MatrixXf &source_cloud, MatrixXf &target_cloud, VectorXf &t, VectorXf &q) {
@@ -475,7 +531,7 @@ int main (int argc, char **argv) {
     ros::init(argc, argv, "test_object_template_alignment_plugin");
 
     ros::NodeHandle nh;
-    ros::Subscriber sub1, sub2, sub3, sub4;
+    ros::Subscriber sub1, sub2, sub3, sub4, sub5;
 
     sub1 = nh.subscribe("/flor/worldmodel/ocs/cloud_result", 1, pointcloudCallback);
 
@@ -484,6 +540,8 @@ int main (int argc, char **argv) {
     sub3 = nh.subscribe("/template/list", 100, templateListCallback);
 
     sub4 = nh.subscribe("/keyboard/keyup", 1, keyboardCallback);
+
+    //sub5 = nh.subscribe("/pointcloud_alignment/feedback",1, feedbackCb);
 
     ros::spin();
 
