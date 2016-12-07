@@ -36,19 +36,23 @@ typedef struct timeval timeval;
 void saveData(string path);
 void run_test(string test_name, string path, MatrixXf template_cloud, MatrixXf target_cloud, geometry_msgs::PoseStamped pose, float t_err, int n_tests);
 bool readInArguments(string path, MatrixXf &source_cloud, MatrixXf &target_cloud, VectorXf &t, VectorXf &q);
-void sendServerRequest(MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, VectorXf R, float &aligned_percentage, float &normalized_error, float &passed_time);
+void sendServerRequest(string test_data_filename, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, VectorXf R, float &aligned_percentage, float &normalized_error, float &passed_time);
 void runTests(string filename, int n_tests, float offset, bool dense, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, MatrixXf R);
-float convertTimeval(timeval t);
+float convertTimeval(timeval start, timeval end);
 VectorXf calcOffset(float dist, bool dense);
 float getRandomNumber();
 void updateVals(float val, float &min, float &max);
 MatrixXf randomRotation();
 MatrixXf quaternionToMatrix(VectorXf q);
+void increaseTestCounter();
+void save_test_data(string filename, float normalized_error, float overlapping_percentage, VectorXf pos, VectorXf q, float passed_time);
 
 static int currentTemplateId;
 static bool pointcloudReceived = false, templateReceived = false;
 static geometry_msgs::PoseStamped currentPose;
 static MatrixXf currentWorld, currentTemplate;
+
+static int global_test_counter = 0, global_number_tests = 15600; // TODO!!
 
 static float percentage_save, error_save;
 
@@ -68,11 +72,12 @@ void feedbackCb(const object_template_alignment_server::PointcloudAlignmentFeedb
     error_save = feedback->normalized_error;
 }
 
-float convertTimeval(timeval t) {
-    return (float) ((1.0/1000)*((t.tv_sec * 1000000 + t.tv_usec)));
+float convertTimeval(timeval start, timeval end) {
+    //return (float) ((((end.tv_sec * 1000000 + end.tv_usec) - (start.tv_sec * 1000000 + start.tv_usec)))/1000.);
+    return ((float) (((end.tv_sec - start.tv_sec)*1000000L + end.tv_usec) - start.tv_usec)) / 1000000.;
 }
 
-void sendServerRequest(MatrixXf source_cloud, MatrixXf target_cloud, VectorXf &t, MatrixXf &R, float &aligned_percentage, float &normalized_error, float &passed_time) {
+void sendServerRequest(string test_data_filename, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf &t, MatrixXf &R, float &aligned_percentage, float &normalized_error, float &passed_time) {
     timeval start, end;
 
     // create initial pose
@@ -137,22 +142,25 @@ void sendServerRequest(MatrixXf source_cloud, MatrixXf target_cloud, VectorXf &t
 
     gettimeofday(&start, NULL);
     ac.sendGoal(goal, &doneCb, &activeCb, &feedbackCb);
-    gettimeofday(&end, NULL);
+
 
     bool finished_before_timeout = ac.waitForResult(ros::Duration(30.0));
 
     if (finished_before_timeout) {
         object_template_alignment_server::PointcloudAlignmentResultConstPtr result = ac.getResult();
+        gettimeofday(&end, NULL);
 
         aligned_percentage = percentage_save;
         normalized_error = error_save;
-        passed_time = convertTimeval(end)-convertTimeval(start);
+        passed_time = convertTimeval(start, end);
 
         t<< result->transformation_pose.pose.position.x, result->transformation_pose.pose.position.y, result->transformation_pose.pose.position.z;
         VectorXf q(4);
         q << result->transformation_pose.pose.orientation.x,result->transformation_pose.pose.orientation.y,
              result->transformation_pose.pose.orientation.z,result->transformation_pose.pose.orientation.w;
         R = quaternionToMatrix(q);
+
+        //save_test_data(test_data_filename, error_save, percentage_save, t, q, passed_time);
     }
 }
 
@@ -165,16 +173,22 @@ void runTests(string filename, int n_tests, float offset, bool dense, MatrixXf s
     float MAX_ROTATION_ERROR = 0.1;
     float MAX_TRANSLATION_ERROR = 0.2;
 
-    int success_ct = 0, success_rate;
+    int success_ct = 0;
+    float success_rate;
+
+    string test_data_filename = filename.substr(0, filename.length()-4) + "_test_data.txt";
+    std::ofstream file;
+    /*file.open(test_data_filename.c_str());
+    file.close();*/
 
     for (int i = 0; i < n_tests; i++) {
+        increaseTestCounter();
+
         VectorXf t_pa = t + calcOffset(offset, dense);
         MatrixXf R_pa = randomRotation();
 
-        sendServerRequest(source_cloud, target_cloud, t_pa, R_pa, aligned_percentage, normalized_error, passed_time);
+        sendServerRequest(test_data_filename, source_cloud, target_cloud, t_pa, R_pa, aligned_percentage, normalized_error, passed_time);
 
-        cout<<"t: "<<(t-t_pa).norm()<<" "<<((t-t_pa).norm() < MAX_TRANSLATION_ERROR)<<endl;
-        cout<<"R: "<<(R-R_pa).norm()<<" "<<((R-R_pa).norm() < MAX_ROTATION_ERROR)<<endl;
 
         if ((t-t_pa).norm() < MAX_TRANSLATION_ERROR && (R-R_pa).norm() < MAX_ROTATION_ERROR) {
             success_ct++;
@@ -196,12 +210,25 @@ void runTests(string filename, int n_tests, float offset, bool dense, MatrixXf s
     avg_error /= ((float) n_tests);
     avg_time /= ((float) n_tests);
 
-    std::ofstream file;
     file.open(filename.c_str(), std::ios::app);
     file << "\t "<<success_ct<<"/"<<n_tests<<" succeeded, success rate: "<<success_rate<<endl;
     file << "\t avg_percentage: "<<avg_percentage<<", min_percentage: "<<min_percentage<<", max_percentage: "<<max_percentage<<endl;
     file << "\t avg_error: "<<avg_error<<", min_error: "<<min_error<<", max_error: "<<max_error<<endl;
     file << "\t avg_time: "<<avg_time<<", min_time: "<<min_time<<", max_time: "<<max_time<<endl;
+    file.close();
+}
+
+void save_test_data(string filename, float normalized_error, float overlapping_percentage, VectorXf pos, VectorXf q, float passed_time) {
+    std::ofstream file;
+    file.open(filename.c_str(), std::ios::app);
+
+    file << "passed_time: "<<passed_time<<endl;
+    file << "normalized_error: "<<normalized_error<<endl;
+    file << "overlapping_percentage: "<<overlapping_percentage<<endl;
+    file << "position: "<<pos(0)<<" "<<pos(1)<<" "<<pos(2)<<endl;
+    file << "orientation: "<<q(0)<<" "<<q(1)<<" "<<q(2)<<" "<<q(3)<<endl;
+    file << endl;
+
     file.close();
 }
 
@@ -229,16 +256,15 @@ void traverse_directories(string test_data_dir) {
                     MatrixXf R = quaternionToMatrix(q);
 
                     //runTests(sub_dir_name, source_cloud, target_cloud, t, R);
-                    string filename = sub_dir_name + ".txt";
+
                     string test_name = entry->d_name;
-                    //cout<<"sub_dir_name: "<<sub_dir_name<<endl;
-                    //cout<<"name: "<<filename<<endl;
-                    //cout<<"test name: "<<test_name.substr(0,15)<<endl;
 
                     std::ofstream file;
 
+                    int n_tests = 100;
+
                     if (test_name.substr(0,15).compare("drill_on_table_") == 0) {
-                        string filename = sub_dir_name + "_distances.txt";
+                        string filename = sub_dir_name + "_distances_results.txt";
 
                         for (int i = 0; i <= 25; i++) {
                             float dist = ((float) i) * 0.02;
@@ -247,18 +273,18 @@ void traverse_directories(string test_data_dir) {
                             } else {
                                 file.open(filename.c_str(), std::ios::app);
                             }
-                            file << "running "<<25<<" tests with dist = "<<dist<<endl;
+                            file << "running "<<n_tests<<" tests with dist = "<<dist<<endl;
                             file.close();
 
-                            runTests(filename, 1000, dist, false, source_cloud, target_cloud, t, R);
+                            runTests(filename, n_tests, dist, false, source_cloud, target_cloud, t, R);
                         } 
                     }
 
+                    /*string filename = sub_dir_name + ".txt";
 
+                    float dist = 0.2; // TODO: calculate
 
-                    float dist = 0.5; // TODO: calculate
-
-                    runTests(filename, 1, dist, true, source_cloud, target_cloud, t, R);
+                    runTests(filename, 1, dist, true, source_cloud, target_cloud, t, R);*/
                 }
             }
         }
@@ -266,6 +292,20 @@ void traverse_directories(string test_data_dir) {
     } else {
         ROS_ERROR("Could not open test_data_dir");
     }
+}
+
+void increaseTestCounter() {
+    global_test_counter++;
+
+    float average_test_time = 2.5;
+
+    int remaining_tests = global_number_tests - global_test_counter;
+    float remaining_time = (((float) remaining_tests) * average_test_time) / 3600.;
+    int remaining_h = (int) remaining_time;
+    int remaining_min = (((int)((remaining_time-((float)remaining_h)) * 100)) * 60) / 100;
+    ROS_INFO("Executing test %d/%d...", global_test_counter, global_number_tests);
+    ROS_INFO("Estimated remaining time: %dh %d m", remaining_h, remaining_min);
+    ROS_INFO(" ");
 }
 
 void updateVals(float val, float &min, float &max) {
