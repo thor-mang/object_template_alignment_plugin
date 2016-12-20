@@ -46,6 +46,10 @@ MatrixXf randomRotation();
 MatrixXf quaternionToMatrix(VectorXf q);
 void increaseTestCounter();
 void save_test_data(string filename, float normalized_error, float overlapping_percentage, VectorXf pos, VectorXf q, float passed_time);
+void initCSVfile(string filename, string first_entry);
+void writeToCSVfile(string filename, float distance, float success_rate, float avg_time, float min_time, float max_time, float avg_error, float min_error, float max_error);
+void writeToCSVfile(string filename, string test_name, float success_rate, float avg_time, float min_time, float max_time, float avg_error, float min_error, float max_error);
+float calcMaxDistance(MatrixXf const &pc);
 
 static int currentTemplateId;
 static bool pointcloudReceived = false, templateReceived = false;
@@ -54,7 +58,7 @@ static MatrixXf currentWorld, currentTemplate;
 
 static int global_test_counter = 0, global_number_tests = 15600; // TODO!!
 
-static float percentage_save, error_save;
+static float percentage_save = 0, error_save = FLT_MAX;
 
 class PointcloudAlignmentClient
 {
@@ -164,7 +168,7 @@ void sendServerRequest(string test_data_filename, MatrixXf source_cloud, MatrixX
     }
 }
 
-void runTests(string filename, int n_tests, float offset, bool dense, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, MatrixXf R) {
+void runTests(string test_name, int n_tests, float dist, bool regular_test, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, MatrixXf R) {
     float aligned_percentage, normalized_error, passed_time;
     float min_percentage = FLT_MAX, max_percentage = FLT_MIN, avg_percentage = 0;
     float min_error = FLT_MAX, max_error = FLT_MIN, avg_error = 0;
@@ -176,15 +180,12 @@ void runTests(string filename, int n_tests, float offset, bool dense, MatrixXf s
     int success_ct = 0;
     float success_rate;
 
-    string test_data_filename = filename.substr(0, filename.length()-4) + "_test_data.txt";
-    std::ofstream file;
-    /*file.open(test_data_filename.c_str());
-    file.close();*/
+    string test_data_filename = test_name.substr(0, test_name.length()-4) + "_test_data.txt";
 
     for (int i = 0; i < n_tests; i++) {
         increaseTestCounter();
 
-        VectorXf t_pa = t + calcOffset(offset, dense);
+        VectorXf t_pa = t + calcOffset(dist, regular_test);
         MatrixXf R_pa = randomRotation();
 
         sendServerRequest(test_data_filename, source_cloud, target_cloud, t_pa, R_pa, aligned_percentage, normalized_error, passed_time);
@@ -210,12 +211,15 @@ void runTests(string filename, int n_tests, float offset, bool dense, MatrixXf s
     avg_error /= ((float) n_tests);
     avg_time /= ((float) n_tests);
 
-    file.open(filename.c_str(), std::ios::app);
-    file << "\t "<<success_ct<<"/"<<n_tests<<" succeeded, success rate: "<<success_rate<<endl;
-    file << "\t avg_percentage: "<<avg_percentage<<", min_percentage: "<<min_percentage<<", max_percentage: "<<max_percentage<<endl;
-    file << "\t avg_error: "<<avg_error<<", min_error: "<<min_error<<", max_error: "<<max_error<<endl;
-    file << "\t avg_time: "<<avg_time<<", min_time: "<<min_time<<", max_time: "<<max_time<<endl;
-    file.close();
+    cout<<"hier "<<regular_test<<endl;
+
+    if (regular_test == true) {
+        cout<<"now writing regular test to CSV file"<<endl;
+        writeToCSVfile("/home/sebastian/thor/src/object_template_alignment_plugin/test_data/regular_tests", test_name, success_rate, avg_time, min_time, max_time, avg_error, min_error, max_error);
+    } else {
+        cout<<"now writing distance test to CSV file"<<endl;
+        writeToCSVfile(test_name, dist, success_rate, avg_time, min_time, max_time, avg_error, min_error, max_error);
+    }
 }
 
 void save_test_data(string filename, float normalized_error, float overlapping_percentage, VectorXf pos, VectorXf q, float passed_time) {
@@ -255,43 +259,104 @@ void traverse_directories(string test_data_dir) {
 
                     MatrixXf R = quaternionToMatrix(q);
 
-                    //runTests(sub_dir_name, source_cloud, target_cloud, t, R);
-
                     string test_name = entry->d_name;
 
-                    std::ofstream file;
+                    int n_distance_tests = 1, n_regular_tests = 2;
+                    float distance_factor = 1.;
 
-                    int n_tests = 100;
 
+                    // execute distance tests
                     if (test_name.substr(0,15).compare("drill_on_table_") == 0) {
-                        string filename = sub_dir_name + "_distances_results.txt";
+                        cout<<"drill_on_table"<<endl;
+                        string filename = sub_dir_name + "_distances_results";
 
-                        for (int i = 0; i <= 25; i++) {
+                        initCSVfile(filename, "distance");
+                        for (int i = 0; i <= 20; i++) {
                             float dist = ((float) i) * 0.02;
-                            if (i == 0) {
-                                file.open(filename.c_str());
-                            } else {
-                                file.open(filename.c_str(), std::ios::app);
-                            }
-                            file << "running "<<n_tests<<" tests with dist = "<<dist<<endl;
-                            file.close();
 
-                            runTests(filename, n_tests, dist, false, source_cloud, target_cloud, t, R);
+                            runTests(filename, n_distance_tests, dist, false, source_cloud, target_cloud, t, R);
                         } 
                     }
 
-                    /*string filename = sub_dir_name + ".txt";
+                    // execute regular tests
 
-                    float dist = 0.2; // TODO: calculate
+                    initCSVfile("/home/sebastian/thor/src/object_template_alignment_plugin/test_data/regular_tests", "test_name");
 
-                    runTests(filename, 1, dist, true, source_cloud, target_cloud, t, R);*/
+                    float maxDist = calcMaxDistance(source_cloud);
+
+                    float dist = maxDist*distance_factor;
+
+                    runTests(test_name, n_regular_tests, dist, true, source_cloud, target_cloud, t, R);
                 }
             }
         }
+
         closedir (dir);
     } else {
         ROS_ERROR("Could not open test_data_dir");
     }
+}
+
+float calcMaxDistance(MatrixXf const &pc) {
+    VectorXf midPoint(3);
+    midPoint<<0,0,0;
+    for (int i = 0; i < pc.cols(); i++) {
+        midPoint(0) += pc(0,i);
+        midPoint(1) += pc(1,i);
+        midPoint(2) += pc(2,i);
+    }
+    midPoint = midPoint / ((float) pc.cols());
+
+    float maxDist = FLT_MIN;
+    float dist;
+    VectorXf distVec(3);
+    for (int i = 0; i < pc.cols(); i++) {
+        distVec(0) = pc(0,i) - midPoint(0);
+        distVec(1) = pc(1,i) - midPoint(1);
+        distVec(2) = pc(2,i) - midPoint(2);
+
+        dist = sqrt(distVec(0)*distVec(0) + distVec(1)*distVec(1) + distVec(2)*distVec(2));
+
+        if (dist > maxDist) {
+            maxDist = dist;
+        }
+    }
+
+    return maxDist;
+}
+
+void initCSVfile(string filename, string first_entry) {
+    cout<<"initCSVfile: "<<filename<<endl;
+    filename = filename + ".csv";
+    std::ofstream file;
+    file.open(filename.c_str());
+
+    file << first_entry << ", success_rate, avg_time, min_time, max_time, avg_error, min_error, max_error" << endl;
+
+    file.close();
+}
+
+void writeToCSVfile(string filename, float distance, float success_rate, float avg_time, float min_time, float max_time, float avg_error, float min_error, float max_error) {
+    cout<<"writeToCSVfile: "<<filename<<endl;
+    filename = filename + ".csv";
+
+    std::ofstream file;
+    file.open(filename.c_str(), std::ios::app);
+
+    file << distance <<","<< success_rate <<","<< avg_time <<","<< min_time <<","<< max_time <<","<< avg_error <<","<< min_error <<","<< max_error << endl;
+
+    file.close();
+}
+
+void writeToCSVfile(string filename, string test_name, float success_rate, float avg_time, float min_time, float max_time, float avg_error, float min_error, float max_error) {
+    cout<<"writeToCSVfile: "<<filename<<" "<<test_name<<endl;
+    filename = filename + ".csv";
+    std::ofstream file;
+    file.open(filename.c_str(), std::ios::app);
+
+    file << test_name <<","<< success_rate <<","<< avg_time <<","<< min_time <<","<< max_time <<","<< avg_error <<","<< min_error <<","<< max_error << endl;
+
+    file.close();
 }
 
 void increaseTestCounter() {
@@ -303,9 +368,10 @@ void increaseTestCounter() {
     float remaining_time = (((float) remaining_tests) * average_test_time) / 3600.;
     int remaining_h = (int) remaining_time;
     int remaining_min = (((int)((remaining_time-((float)remaining_h)) * 100)) * 60) / 100;
+    ROS_INFO(" ");
     ROS_INFO("Executing test %d/%d...", global_test_counter, global_number_tests);
     ROS_INFO("Estimated remaining time: %dh %d m", remaining_h, remaining_min);
-    ROS_INFO(" ");
+
 }
 
 void updateVals(float val, float &min, float &max) {

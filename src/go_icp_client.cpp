@@ -4,7 +4,7 @@
 
 #include <actionlib/client/simple_action_client.h>
 #include <actionlib/client/terminal_state.h>
-#include <object_template_alignment_server/GoIcpAction.h>
+#include <go_icp_server/GoIcpAction.h>
 #include <csignal>
 
 #include <eigen3/Eigen/Dense>
@@ -55,7 +55,7 @@ void sendRequestToServer() {
     }
 
     // create request for action server and wait for server to start
-    actionlib::SimpleActionClient<object_template_alignment_server::GoIcpAction> ac("pointcloud_alignment", true);
+    actionlib::SimpleActionClient<go_icp_server::GoIcpAction> ac("go_icp", true);
     ROS_INFO("Waiting for action server to start.");
     ac.waitForServer();
     ROS_INFO("Action server started, sending goal.");
@@ -77,7 +77,7 @@ void sendRequestToServer() {
     pcl::toROSMsg(*world_pointcloud, target_pointcloud);
 
     // create goal and set parameters
-    object_template_alignment_server::GoIcpGoal goal;
+    go_icp_server::GoIcpGoal goal;
 
     goal.source_pointcloud = template_pointcloud;
     goal.target_pointcloud = target_pointcloud;
@@ -97,7 +97,7 @@ void sendRequestToServer() {
     bool finished_before_timeout = ac.waitForResult(ros::Duration(30.0));
 
     if (finished_before_timeout) {
-        object_template_alignment_server::GoIcpResultConstPtr result = ac.getResult();
+        go_icp_server::GoIcpResultConstPtr result = ac.getResult();
 
         // send current Pose to align_template_srv
         ros::ServiceClient align_template_client;
