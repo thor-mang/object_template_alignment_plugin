@@ -261,7 +261,7 @@ void traverse_directories(string test_data_dir) {
 
                     string test_name = entry->d_name;
 
-                    int n_distance_tests = 1, n_regular_tests = 2;
+                    int n_distance_tests = 2, n_regular_tests = 2;
                     float distance_factor = 1.;
 
 
@@ -280,13 +280,13 @@ void traverse_directories(string test_data_dir) {
 
                     // execute regular tests
 
-                    initCSVfile("/home/sebastian/thor/src/object_template_alignment_plugin/test_data/regular_tests", "test_name");
+                    /*initCSVfile("/home/sebastian/thor/src/object_template_alignment_plugin/test_data/regular_tests", "test_name");
 
                     float maxDist = calcMaxDistance(source_cloud);
 
                     float dist = maxDist*distance_factor;
 
-                    runTests(test_name, n_regular_tests, dist, true, source_cloud, target_cloud, t, R);
+                    runTests(test_name, n_regular_tests, dist, true, source_cloud, target_cloud, t, R);*/
                 }
             }
         }
