@@ -34,10 +34,10 @@ using namespace Eigen;
 typedef struct timeval timeval;
 
 void saveData(string path);
-void run_test(string test_name, string path, MatrixXf template_cloud, MatrixXf target_cloud, geometry_msgs::PoseStamped pose, float t_err, int n_tests);
-bool readInArguments(string path, MatrixXf &source_cloud, MatrixXf &target_cloud, VectorXf &t, VectorXf &q);
+void runTests(string test_name, int n_tests, float dist, bool regular_test, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, vector<VectorXf> orientations);
+bool readInArguments(string path, MatrixXf &source_cloud, MatrixXf &target_cloud, VectorXf &t, vector<VectorXf> &orientations);
 void sendServerRequest(string test_data_filename, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, VectorXf R, float &aligned_percentage, float &normalized_error, float &passed_time);
-void runTests(string filename, int n_tests, float offset, bool dense, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, MatrixXf R);
+void runTests(string filename, int n_tests, float offset, bool dense, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, vector<VectorXf> orientations);
 float convertTimeval(timeval start, timeval end);
 VectorXf calcOffset(float dist, bool dense);
 float getRandomNumber();
@@ -56,7 +56,7 @@ static bool pointcloudReceived = false, templateReceived = false;
 static geometry_msgs::PoseStamped currentPose;
 static MatrixXf currentWorld, currentTemplate;
 
-static int global_test_counter = 0, global_number_tests = 15600; // TODO!!
+static int global_test_counter = 0, global_number_tests = 20600; // TODO!!
 
 static float percentage_save = 0, error_save = FLT_MAX;
 
@@ -168,14 +168,14 @@ void sendServerRequest(string test_data_filename, MatrixXf source_cloud, MatrixX
     }
 }
 
-void runTests(string test_name, int n_tests, float dist, bool regular_test, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, MatrixXf R) {
+void runTests(string test_name, int n_tests, float dist, bool regular_test, MatrixXf source_cloud, MatrixXf target_cloud, VectorXf t, vector<VectorXf> orientations) {
     float aligned_percentage, normalized_error, passed_time;
     float min_percentage = FLT_MAX, max_percentage = FLT_MIN, avg_percentage = 0;
     float min_error = FLT_MAX, max_error = FLT_MIN, avg_error = 0;
     float min_time = FLT_MAX, max_time = FLT_MIN, avg_time = 0;
 
-    float MAX_ROTATION_ERROR = 0.1;
-    float MAX_TRANSLATION_ERROR = 0.2;
+    float MAX_ROTATION_ERROR = 0.2;
+    float MAX_TRANSLATION_ERROR = 0.5;
 
     int success_ct = 0;
     float success_rate;
@@ -190,8 +190,22 @@ void runTests(string test_name, int n_tests, float dist, bool regular_test, Matr
 
         sendServerRequest(test_data_filename, source_cloud, target_cloud, t_pa, R_pa, aligned_percentage, normalized_error, passed_time);
 
+        bool R_success = false;
+        float R_min = FLT_MAX;
+        for (int i = 0; i < orientations.size(); i++) {
+            MatrixXf R = quaternionToMatrix(orientations[i]);
+            if ((R-R_pa).norm() < MAX_ROTATION_ERROR) {
+                R_success = true;
+                break;
+            }
+            if ((R-R_pa).norm() < R_min) {
+                R_min = (R-R_pa).norm();
+            }
+        }
 
-        if ((t-t_pa).norm() < MAX_TRANSLATION_ERROR && (R-R_pa).norm() < MAX_ROTATION_ERROR) {
+        //cout<<"t_err: "<<(t-t_pa).norm()<<" "<<". R_err: "<<R_min<<endl;
+
+        if ((t-t_pa).norm() < MAX_TRANSLATION_ERROR && R_success) {
             success_ct++;
         }
 
@@ -210,8 +224,6 @@ void runTests(string test_name, int n_tests, float dist, bool regular_test, Matr
     avg_percentage /= ((float) n_tests);
     avg_error /= ((float) n_tests);
     avg_time /= ((float) n_tests);
-
-    cout<<"hier "<<regular_test<<endl;
 
     if (regular_test == true) {
         cout<<"now writing regular test to CSV file"<<endl;
@@ -240,6 +252,7 @@ void traverse_directories(string test_data_dir) {
     DIR *dir, *sub_dir;
     struct dirent *entry;
     if ((dir = opendir (test_data_dir.c_str())) != NULL) {
+        bool initialized = false;
         while ((entry = readdir (dir)) != NULL) {
             if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
                 continue;
@@ -249,24 +262,27 @@ void traverse_directories(string test_data_dir) {
                 string sub_dir_name = test_data_dir + entry->d_name;
                 if ((sub_dir = opendir(sub_dir_name.c_str())) != NULL) {
 
-                    VectorXf t, q;
+                    vector<VectorXf> orientations;
+                    VectorXf t;
                     MatrixXf source_cloud, target_cloud;
 
-                    if (readInArguments(sub_dir_name, source_cloud, target_cloud, t, q) == false) {
+                    if (readInArguments(sub_dir_name, source_cloud, target_cloud, t, orientations) == false) {
                         ROS_ERROR("%s contains not all data!", sub_dir_name.c_str());
                         return;
                     }
 
-                    MatrixXf R = quaternionToMatrix(q);
+                    //MatrixXf R = quaternionToMatrix(q);
 
                     string test_name = entry->d_name;
 
-                    int n_distance_tests = 2, n_regular_tests = 2;
-                    float distance_factor = 1.;
+                    int n_distance_tests = 200, n_regular_tests = 1000;
+                    float distance_factor = 0.1;
 
 
                     // execute distance tests
-                    if (test_name.substr(0,15).compare("drill_on_table_") == 0) {
+                    if (test_name.substr(0,16).compare("drill_on_table_1") == 0 ||
+                        test_name.substr(0,16).compare("drill_on_table_2") == 0 ||
+                        test_name.substr(0,16).compare("drill_on_table_3") == 0) {
                         cout<<"drill_on_table"<<endl;
                         string filename = sub_dir_name + "_distances_results";
 
@@ -274,19 +290,23 @@ void traverse_directories(string test_data_dir) {
                         for (int i = 0; i <= 20; i++) {
                             float dist = ((float) i) * 0.02;
 
-                            runTests(filename, n_distance_tests, dist, false, source_cloud, target_cloud, t, R);
+                            runTests(filename, n_distance_tests, dist, false, source_cloud, target_cloud, t, orientations);
                         } 
-                    }
+                    } //else {
 
-                    // execute regular tests
+                        // execute regular tests
 
-                    /*initCSVfile("/home/sebastian/thor/src/object_template_alignment_plugin/test_data/regular_tests", "test_name");
+                        if (initialized == false) {
+                            initCSVfile("/home/sebastian/thor/src/object_template_alignment_plugin/test_data/regular_tests", "test_name");
+                            initialized = true;
+                        }
 
-                    float maxDist = calcMaxDistance(source_cloud);
+                        float maxDist = calcMaxDistance(source_cloud);
 
-                    float dist = maxDist*distance_factor;
+                        float dist = maxDist*distance_factor;
 
-                    runTests(test_name, n_regular_tests, dist, true, source_cloud, target_cloud, t, R);*/
+                        runTests(test_name, n_regular_tests, dist, true, source_cloud, target_cloud, t, orientations);
+                    //}
                 }
             }
         }
@@ -295,6 +315,81 @@ void traverse_directories(string test_data_dir) {
     } else {
         ROS_ERROR("Could not open test_data_dir");
     }
+}
+
+bool readInArguments(string path, MatrixXf &source_cloud, MatrixXf &target_cloud, VectorXf &t, vector<VectorXf> &orientations) {
+    ifstream file;
+    int cols;
+
+    // read in position
+    t = VectorXf(3);
+    string filename = path + "/position.txt";
+    file.open(filename.c_str());
+    if (!file.is_open()) {
+        ROS_ERROR("Failed to open %s", filename.c_str());
+        return false;
+    }
+    for (int i = 0; i < 3; i++) {
+        file >> t(i);
+    }
+    file.close();
+
+    // read in orientation
+
+    //q = VectorXf(4);
+    filename = path + "/orientation.txt";
+    file.open(filename.c_str());
+    if (!file.is_open()) {
+        ROS_ERROR("Failed to open %s", filename.c_str());
+        return false;
+    }
+
+    //vector<VectorXf> orientations;
+    std::string line;
+    while (std::getline(file, line)) {
+        std::stringstream linestream(line);
+        float v1,v2,v3,v4;
+        VectorXf tmp(4);
+        if (linestream >> v1 >> v2 >> v3 >> v4) {
+            tmp << v1,v2,v3,v4;
+            orientations.push_back(tmp);
+        }
+    }
+    file.close();
+
+    // read in source cloud
+    filename = path + "/source.txt";
+    file.open(filename.c_str());
+    if (!file.is_open()) {
+        ROS_ERROR("Failed to open %s", filename.c_str());
+        return false;
+    }
+    file >> cols;
+    source_cloud = MatrixXf(3,cols);
+    for (int i = 0; i < cols; i++) {
+        file >> source_cloud(0,i);
+        file >> source_cloud(1,i);
+        file >> source_cloud(2,i);
+    }
+    file.close();
+
+    // read in target cloud
+    filename = path + "/target.txt";
+    file.open(filename.c_str());
+    if (!file.is_open()) {
+        ROS_ERROR("Failed to open %s", filename.c_str());
+        return false;
+    }
+    file >> cols;
+    target_cloud = MatrixXf(3,cols);
+    for (int i = 0; i < cols; i++) {
+        file >> target_cloud(0,i);
+        file >> target_cloud(1,i);
+        file >> target_cloud(2,i);
+    }
+    file.close();
+
+    return true;
 }
 
 float calcMaxDistance(MatrixXf const &pc) {
@@ -440,71 +535,6 @@ VectorXf calcOffset(float dist, bool dense) {
 
 float getRandomNumber() {
     return ((float) rand() / ((float ) RAND_MAX));
-}
-
-bool readInArguments(string path, MatrixXf &source_cloud, MatrixXf &target_cloud, VectorXf &t, VectorXf &q) {
-    ifstream file;
-    int cols;
-
-    // read in position
-    t = VectorXf(3);
-    string filename = path + "/position.txt";
-    file.open(filename.c_str());
-    if (!file.is_open()) {
-        ROS_ERROR("Failed to open %s", filename.c_str());
-        return false;
-    }
-    for (int i = 0; i < 3; i++) {
-        file >> t(i);
-    }
-    file.close();
-
-    // read in orientation
-    q = VectorXf(4);
-    filename = path + "/orientation.txt";
-    file.open(filename.c_str());
-    if (!file.is_open()) {
-        ROS_ERROR("Failed to open %s", filename.c_str());
-        return false;
-    }
-    for (int i = 0; i < 4; i++) {
-        file >> q(i);
-    }
-    file.close();
-
-    // read in source cloud
-    filename = path + "/source.txt";
-    file.open(filename.c_str());
-    if (!file.is_open()) {
-        ROS_ERROR("Failed to open %s", filename.c_str());
-        return false;
-    }
-    file >> cols;
-    source_cloud = MatrixXf(3,cols);
-    for (int i = 0; i < cols; i++) {
-        file >> source_cloud(0,i);
-        file >> source_cloud(1,i);
-        file >> source_cloud(2,i);
-    }
-    file.close();
-
-    // read in target cloud
-    filename = path + "/target.txt";
-    file.open(filename.c_str());
-    if (!file.is_open()) {
-        ROS_ERROR("Failed to open %s", filename.c_str());
-        return false;
-    }
-    file >> cols;
-    target_cloud = MatrixXf(3,cols);
-    for (int i = 0; i < cols; i++) {
-        file >> target_cloud(0,i);
-        file >> target_cloud(1,i);
-        file >> target_cloud(2,i);
-    }
-    file.close();
-
-    return true;
 }
 
 void saveData(string path) {
