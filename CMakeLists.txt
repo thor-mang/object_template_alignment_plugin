@@ -155,20 +155,13 @@ include_directories(
 # add_executable(learning_actionlib_kal_node src/learning_actionlib_kal_node.cpp)
 
 add_executable(pointcloud_alignment_client src/pointcloud_alignment_client.cpp)
-add_executable(pointcloud_alignment_testing_client src/pointcloud_alignment_testing_client.cpp)
-#add_executable(go_icp_client src/go_icp_client.cpp)
-
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
 add_dependencies(pointcloud_alignment_client ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
-add_dependencies(pointcloud_alignment_testing_client ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
-#add_dependencies(go_icp_client ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Specify libraries to link a library or executable target against
 target_link_libraries(pointcloud_alignment_client ${catkin_LIBRARIES})
-target_link_libraries(pointcloud_alignment_testing_client ${catkin_LIBRARIES})
-#target_link_libraries(go_icp_client ${catkin_LIBRARIES})
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above

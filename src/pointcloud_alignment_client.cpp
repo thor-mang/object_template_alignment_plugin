@@ -46,11 +46,10 @@ protected:
 };
 
 void sendRequestToServer() {
+
     // check if world cloud and template are already available
     if (pointcloudReceived == false) {
-
         ROS_ERROR("No pointcloud received - Please send a pointcloud request first.");
-
         return;
     }
 
@@ -70,15 +69,15 @@ void sendRequestToServer() {
     string path = ros::package::getPath("vigir_template_library") + "/object_library/";
     sensor_msgs::PointCloud2 template_pointcloud;
     boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > cloud (new pcl::PointCloud<pcl::PointXYZ>());
-    pcl::io::loadPCDFile(path + filename,*cloud); // TODO: Fehler abfangen
+    pcl::io::loadPCDFile(path + filename,*cloud);
     pcl::toROSMsg(*cloud, template_pointcloud);
 
+    // convert target point cloud to msg
     static sensor_msgs::PointCloud2 target_pointcloud;
     pcl::toROSMsg(*world_pointcloud, target_pointcloud);
 
     // create goal and set parameters
     object_template_alignment_server::PointcloudAlignmentGoal goal;
-
     goal.source_pointcloud = template_pointcloud;
     goal.target_pointcloud = target_pointcloud;
 
@@ -112,7 +111,6 @@ void sendRequestToServer() {
             ROS_ERROR("Failed to call service request align template");
         }
 
-
         actionlib::SimpleClientGoalState state = ac.getState();
         ROS_INFO("Action finished: %s",state.toString().c_str());
     }
@@ -135,7 +133,6 @@ void keyboardCallback(const keyboard::Key::ConstPtr& key) {
 
 void templateListCallback(const vigir_object_template_msgs::TemplateServerList::ConstPtr& templateList) {
     if (templateReceived == true) {
-        templateReceived = false;
 
         // get position of the current template in the template list
         int pos = -1;
@@ -153,6 +150,7 @@ void templateListCallback(const vigir_object_template_msgs::TemplateServerList::
             currentPose = templateList->pose.at(pos).pose;
 
             sendRequestToServer();
+            templateReceived = false;
         }
     }
 }
@@ -167,7 +165,6 @@ void templateSelectionCallback(const vigir_ocs_msgs::OCSObjectSelection::ConstPt
 
 void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pointcloud) {
     cout<<"I received a new pointcloud" <<endl;
-
 
     boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pc_ (new pcl::PointCloud<pcl::PointXYZ>());
     pcl::fromROSMsg(*pointcloud, *pc_);
