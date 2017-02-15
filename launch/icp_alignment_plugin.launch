@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+
+<launch>
+  <node name="icp_alignment_client" pkg="object_template_alignment_plugin" type="icp_alignment_client" output="screen"  />
+</launch>
