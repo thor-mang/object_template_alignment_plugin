@@ -33,11 +33,8 @@
 using namespace std;
 using namespace Eigen;
 
-static int currentTemplateId;
-static string currentTemplateName;
-static geometry_msgs::Pose currentPose;
-static boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > world_pointcloud;
-static bool pointcloudReceived = false, templateReceived = false;
+static boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pointmap, scancloud;
+static bool pointmapReceived = false, scancloudReceived = false;
 
 
 
@@ -54,7 +51,7 @@ protected:
 
 void sendRequestToServer() {
 
-    // check if world cloud and template are already available
+    /*// check if world cloud and template are already available
     if (pointcloudReceived == false) {
         ROS_ERROR("No pointcloud received - Please send a pointcloud request first.");
         return;
@@ -123,7 +120,7 @@ void sendRequestToServer() {
     }
     else {
         ROS_INFO("Action did not finish before the time out.");
-    }
+    }*/
 }
 
 void keyboardCallback(const keyboard::Key::ConstPtr& key) {
@@ -138,23 +135,26 @@ void keyboardCallback(const keyboard::Key::ConstPtr& key) {
     }
 }
 
-void laserScanCallback(const sensor_msgs::LaserScan::ConstPtr& laserScan) {
-
-}
-
-void orientationCallback(const tf2_msgs::TFMessage::ConstPtr& tf) {
-    geometry_msgs::Vector3 bla = tf->transforms.at(0).position;
-}
-
-void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pointcloud) {
-    cout<<"I received a new pointcloud" <<endl;
+void pointmapCallback(const sensor_msgs::PointCloud2::ConstPtr& pointmap_msg) {
+    cout<<"I received a new pointmap" <<endl;
 
     boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pc_ (new pcl::PointCloud<pcl::PointXYZ>());
-    pcl::fromROSMsg(*pointcloud, *pc_);
+    pcl::fromROSMsg(*pointmap_msg, *pc_);
 
-    world_pointcloud = pc_;
+    pointmap = pc_;
 
-    pointcloudReceived = true;
+    pointmapReceived = true;
+}
+
+void scancloudCallback(const sensor_msgs::PointCloud2::ConstPtr& scancloud_msg) {
+    cout<<"I received a new scancloud" <<endl;
+
+    boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pc_ (new pcl::PointCloud<pcl::PointXYZ>());
+    pcl::fromROSMsg(*scancloud_msg, *pc_);
+
+    scancloud = pc_;
+
+    scancloudReceived = true;
 }
 
 int main (int argc, char **argv) {
@@ -163,9 +163,10 @@ int main (int argc, char **argv) {
     ros::NodeHandle nh;
     ros::Subscriber sub1, sub2, sub3, sub4;
 
-    sub1 = nh.subscribe("/flor/worldmodel/ocs/cloud_result", 1, pointcloudCallback);
 
+    sub1 = nh.subscribe("/point_map", 1, pointmapCallback);
 
+    sub2 = nh.subscribe("/scan_cloud_aggregated", 1, scancloudCallback);
 
     sub4 = nh.subscribe("/keyboard/keyup", 1, keyboardCallback);
 
