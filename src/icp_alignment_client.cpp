@@ -4,13 +4,14 @@
 
 #include <actionlib/client/simple_action_client.h>
 #include <actionlib/client/terminal_state.h>
-#include <object_template_alignment_server/PointcloudAlignmentAction.h>
+#include <icp_alignment_server/PointcloudAlignmentAction.h>
 #include <csignal>
 
 #include <eigen3/Eigen/Dense>
 #include <eigen3/Eigen/SVD>
 
 #include <sensor_msgs/PointCloud2.h>
+#include <sensor_msgs/Imu.h>
 #include <vigir_object_template_msgs/TemplateServerList.h>
 #include <vigir_ocs_msgs/OCSObjectSelection.h>
 
@@ -24,8 +25,7 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types_conversion.h>
 
-#include <tf/transform_listener.h>
-#include <laser_geometry/laser_geometry.h>
+
 
 
 
@@ -34,7 +34,7 @@ using namespace std;
 using namespace Eigen;
 
 static boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pointmap, scancloud;
-static bool pointmapReceived = false, scancloudReceived = false;
+static bool pointmapReceived = false, scancloudReceived = false, imuReceived = false;
 
 
 
@@ -51,12 +51,51 @@ protected:
 
 void sendRequestToServer() {
 
-    /*// check if world cloud and template are already available
-    if (pointcloudReceived == false) {
-        ROS_ERROR("No pointcloud received - Please send a pointcloud request first.");
+    // check if all necessary information has been received
+    if (scancloudReceived == false) {
+        ROS_ERROR("No scancloud received - Please send a pointcloud request first.");
+        return;
+    } else if (pointmapReceived == false) {
+        ROS_ERROR("No pointmap received - Please send a pointcloud request first.");
+        return;
+    } else if (imuReceived == false) {
+        ROS_ERROR("No IMU information received - Please send a pointcloud request first.");
         return;
     }
 
+    // contact server
+    actionlib::SimpleActionClient<icp_alignment_server::PointcloudAlignmentAction> ac("pointcloud_alignment", true);
+    ROS_INFO("Waiting for action server to start.");
+    ac.waitForServer();
+    ROS_INFO("Action server started, sending goal.");
+
+    // convert pointclouds
+    static sensor_msgs::PointCloud2 scandata_msg, pointmap_msg;
+    pcl::toROSMsg(*scancloud, scandata_msg);
+    pcl::toROSMsg(*pointmap, pointmap_msg);
+
+    // create goal and set parameters
+    icp_alignment_server::PointcloudAlignmentGoal goal;
+    // TODO: ...
+
+    // call server
+    ac.sendGoal(goal);
+
+    bool finished_before_timeout = ac.waitForResult(ros::Duration(30.0));
+
+    if (finished_before_timeout) {
+        icp_alignment_server::PointcloudAlignmentResultConstPtr result = ac.getResult();
+
+
+
+        actionlib::SimpleClientGoalState state = ac.getState();
+        ROS_INFO("Action finished: %s",state.toString().c_str());
+    }
+    else {
+        ROS_INFO("Action did not finish before the time out.");
+    }
+
+    /*
     // create request for action server and wait for server to start
     actionlib::SimpleActionClient<object_template_alignment_server::PointcloudAlignmentAction> ac("pointcloud_alignment", true);
     ROS_INFO("Waiting for action server to start.");
@@ -155,6 +194,11 @@ void scancloudCallback(const sensor_msgs::PointCloud2::ConstPtr& scancloud_msg) 
     scancloud = pc_;
 
     scancloudReceived = true;
+}
+
+void imuCallback(const sensor_msgs::Imu::ConstPtr& imu_msg) {
+
+    imuReceived = true;
 }
 
 int main (int argc, char **argv) {
