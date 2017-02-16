@@ -27,18 +27,11 @@
 
 
 
-
-
-
 using namespace std;
 using namespace Eigen;
 
 static boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pointmap, scancloud;
 static bool pointmapReceived = false, scancloudReceived = false, imuReceived = false;
-
-
-
-static int mode = 1;
 
 
 class PointcloudAlignmentClient
@@ -75,8 +68,12 @@ void sendRequestToServer() {
     pcl::toROSMsg(*pointmap, pointmap_msg);
 
     // create goal and set parameters
+    VectorXf validRotationAxis(3);
+    validRotationAxis << 0,0,1;
     icp_alignment_server::PointcloudAlignmentGoal goal;
-    // TODO: ...
+    goal.scancloud = scandata_msg;
+    goal.pointmap = pointmap_msg;
+    goal.valid_rotation_axis = validRotationAxis;
 
     // call server
     ac.sendGoal(goal);
@@ -165,12 +162,11 @@ void sendRequestToServer() {
 void keyboardCallback(const keyboard::Key::ConstPtr& key) {
     // set command according to input
     int command;
-    if (key->code == 108) { // code == l
-        mode = 0;
-        ROS_INFO("Mode set to local pointcloud alignment.");
-    } else if (key->code == 103) { // code == g;
-        mode = 1;
-        ROS_INFO("Mode set to global pointcloud alignment.");
+    if (key->code == 97) { // code == a
+        ROS_INFO("Sending server request.");
+        sendRequestToServer();
+    } else {
+        ROS_INFO("Key %d pressed", key->code);
     }
 }
 
