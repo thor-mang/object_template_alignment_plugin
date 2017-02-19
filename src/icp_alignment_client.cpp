@@ -32,6 +32,7 @@ using namespace Eigen;
 
 static boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > pointmap, scancloud;
 static bool pointmapReceived = false, scancloudReceived = false, imuReceived = false;
+static geometry_msgs::Point validRotationAxis;
 
 
 class PointcloudAlignmentClient
@@ -52,8 +53,10 @@ void sendRequestToServer() {
         ROS_ERROR("No pointmap received - Please send a pointcloud request first.");
         return;
     } else if (imuReceived == false) {
-        ROS_ERROR("No IMU information received - Please send a pointcloud request first.");
-        return;
+        ROS_ERROR("No IMU information received - Using z axis as valid rotation axis.");
+        validRotationAxis.x = 0;
+        validRotationAxis.y = 0;
+        validRotationAxis.z = 1;
     }
 
     // contact server
@@ -68,8 +71,8 @@ void sendRequestToServer() {
     pcl::toROSMsg(*pointmap, pointmap_msg);
 
     // create goal and set parameters
-    VectorXf validRotationAxis(3);
-    validRotationAxis << 0,0,1;
+
+
     icp_alignment_server::PointcloudAlignmentGoal goal;
     goal.scancloud = scandata_msg;
     goal.pointmap = pointmap_msg;
@@ -83,80 +86,14 @@ void sendRequestToServer() {
     if (finished_before_timeout) {
         icp_alignment_server::PointcloudAlignmentResultConstPtr result = ac.getResult();
 
-
-
-        actionlib::SimpleClientGoalState state = ac.getState();
-        ROS_INFO("Action finished: %s",state.toString().c_str());
-    }
-    else {
-        ROS_INFO("Action did not finish before the time out.");
-    }
-
-    /*
-    // create request for action server and wait for server to start
-    actionlib::SimpleActionClient<object_template_alignment_server::PointcloudAlignmentAction> ac("pointcloud_alignment", true);
-    ROS_INFO("Waiting for action server to start.");
-    ac.waitForServer();
-    ROS_INFO("Action server started, sending goal.");
-
-    // get template name
-    std::string filename = currentTemplateName;
-    size_t dot_pos = currentTemplateName.find_last_of('.');
-    filename.insert(dot_pos, ".pcd");
-    filename = filename.substr(0, dot_pos+4);
-
-    // get template location and load template from pcd file
-    string path = ros::package::getPath("vigir_template_library") + "/object_library/";
-    sensor_msgs::PointCloud2 template_pointcloud;
-    boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > cloud (new pcl::PointCloud<pcl::PointXYZ>());
-    pcl::io::loadPCDFile(path + filename,*cloud);
-    pcl::toROSMsg(*cloud, template_pointcloud);
-
-    // convert target point cloud to msg
-    static sensor_msgs::PointCloud2 target_pointcloud;
-    pcl::toROSMsg(*world_pointcloud, target_pointcloud);
-
-    // create goal and set parameters
-    object_template_alignment_server::PointcloudAlignmentGoal goal;
-    goal.source_pointcloud = template_pointcloud;
-    goal.target_pointcloud = target_pointcloud;
-
-    geometry_msgs::PoseStamped initial_pose;
-    initial_pose.pose.orientation = currentPose.orientation;
-    initial_pose.pose.position = currentPose.position;
-    goal.initial_pose = initial_pose;
-
-    goal.command = mode;
-
-    // call server
-    ac.sendGoal(goal);
-
-    bool finished_before_timeout = ac.waitForResult(ros::Duration(30.0));
-
-    if (finished_before_timeout) {
-        object_template_alignment_server::PointcloudAlignmentResultConstPtr result = ac.getResult();
-
-        // send current Pose to align_template_srv
-        ros::ServiceClient align_template_client;
-        vigir_object_template_msgs::SetAlignObjectTemplate align_template_srv_;
-        ros::NodeHandle nh_;
-
-        align_template_client = nh_.serviceClient<vigir_object_template_msgs::SetAlignObjectTemplate>("/align_object_template");
-
-        align_template_srv_.request.template_id = currentTemplateId; // toDO: id zwischenspeichern
-        align_template_srv_.request.pose.pose.position = result->transformation_pose.pose.position;
-        align_template_srv_.request.pose.pose.orientation = result->transformation_pose.pose.orientation;
-        align_template_srv_.request.pose.header.stamp = ros::Time::now();
-        if (!align_template_client.call(align_template_srv_)) {
-            ROS_ERROR("Failed to call service request align template");
-        }
+        // TODO: what should be done with the result?
 
         actionlib::SimpleClientGoalState state = ac.getState();
         ROS_INFO("Action finished: %s",state.toString().c_str());
     }
     else {
         ROS_INFO("Action did not finish before the time out.");
-    }*/
+    }
 }
 
 void keyboardCallback(const keyboard::Key::ConstPtr& key) {
@@ -193,12 +130,18 @@ void scancloudCallback(const sensor_msgs::PointCloud2::ConstPtr& scancloud_msg) 
 }
 
 void imuCallback(const sensor_msgs::Imu::ConstPtr& imu_msg) {
+    cout<<"IMU information received."<<endl;
 
-    imuReceived = true;
+    //TODO: fill and uncomment in order to use imu information
+    /*validRotationAxis(0) = ...
+    validRotationAxis(1) = ...
+    validRotationAxis(2) = ...
+    imuReceived = true;*/
+    // Note: If imuReceived remains false, (0,0,1) is used as validRotationAxis (see sendServerRequest())
 }
 
 int main (int argc, char **argv) {
-    ros::init(argc, argv, "test_object_template_alignment_plugin");
+    ros::init(argc, argv, "icp_alignment_plugin");
 
     ros::NodeHandle nh;
     ros::Subscriber sub1, sub2, sub3, sub4;
@@ -207,6 +150,8 @@ int main (int argc, char **argv) {
     sub1 = nh.subscribe("/point_map", 1, pointmapCallback);
 
     sub2 = nh.subscribe("/scan_cloud_aggregated", 1, scancloudCallback);
+
+    sub3 = nh.subscribe("/imu/data", 1, imuCallback);
 
     sub4 = nh.subscribe("/keyboard/keyup", 1, keyboardCallback);
 
